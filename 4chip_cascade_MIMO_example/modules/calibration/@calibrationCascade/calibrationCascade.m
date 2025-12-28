@@ -123,7 +123,8 @@ classdef calibrationCascade < Module
         end
         
         %% datapath function
-        % input: adc data, assuming size(input) = [numSamplePerChirp, numChirpsPerFrame numAntenna]
+        % input: adc data, assuming size(input) = [numSamplePerChirp,
+        % numChirpsPerFrame numAntenna]???
         [out] = datapath(obj)
                   
       

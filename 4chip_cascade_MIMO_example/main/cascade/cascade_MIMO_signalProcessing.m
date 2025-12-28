@@ -101,7 +101,7 @@ while ~feof(fidList)
     
    % Get Unique File Idxs in the "dataFolder_test"   
    [fileIdx_unique] = getUniqueFileIdx(dataFolder_test);
-    
+    fprintf('fileIdx_unique = %3d\n', size(fileIdx_unique));
     for i_file = 1:(length(fileIdx_unique))
         
        % Get File Names for the Master, Slave1, Slave2, Slave3   
@@ -114,24 +114,50 @@ while ~feof(fidList)
         
        % Get Valid Number of Frames 
        [numValidFrames dataFileSize] = getValidNumFrames(fullfile(dataFolder_test, fileNameStruct.masterIdxFile));
-        %intentionally skip the first frame due to TDA2 
+       %numValidFrames = 1;% number of valid frames is one less than what we
+       %at capture scripts.
+       fprintf('dataFilesize = %3d\n', dataFileSize);
+       fprintf('number of valid frames= %3d\n', numValidFrames);
+      
+       fprintf('sample size= %3d bits \n', 16); 
+       fprintf('number of samples per a chirp =  %3d\n', calibrationObj.numSamplePerChirp);
+       fprintf('chirps per a loop = %3d \n',12);
+       fprintf('loops per a frame = %3d\n',calibrationObj.nchirp_loops);
+       fprintf('bits per a frame = %3d\n',calibrationObj.nchirp_loops*12*calibrationObj.numSamplePerChirp*16);
+       bitsperframe = calibrationObj.nchirp_loops*12*calibrationObj.numSamplePerChirp*16;
+       fprintf('number of valid frames= %3d\n', numValidFrames);
+       fprintf('number of rx antennas=%3d\n', 4);
+       fprintf('considering IQ= %3d\n', 2);
+       fprintf('totalcapturedbits= %3d\n', bitsperframe*2*4*numValidFrames);
+       fprintf('capturedsize in bytes= %3d\n', bitsperframe*2*4*numValidFrames/8);
+       fprintf('capturedsize in KB= %3d KB\n', bitsperframe*2*4*numValidFrames/(8*1024));
+       fprintf(['according to the lua script for mimo configuration, each of the 12 chirps ' ...
+           'per a loop is transmitted in 12 tx antennas using time division multiplexing.' ...
+           'This is a real mimo configuration.\n']);
        
-        for frameIdx = 2:1:numValidFrames;%numFrames_toRun
+       
+        %intentionally skip the first frame due to TDA2 
+        for frameIdx = 2:1:numValidFrames %numFrames_toRun [start_index:step: no.frames]
             tic
             %read and calibrate raw ADC data            
-            calibrationObj.frameIdx = frameIdx;
+            calibrationObj.frameIdx = frameIdx;%
             frameCountGlobal = frameCountGlobal+1
-            adcData = datapath(calibrationObj);
-            
+            adcData = datapath(calibrationObj);%adc data contains the samples captured by all four devices. BUT for a one frame.
+            disp(size(adcData)); %[256 128 16 12]: [SamplesPerChirp NumberOfLoopsPerFrame RX TX] 192 channels because of virtual antennas
+            numElements = numel(adcData);
+            disp(numElements);
+
             % RX Channel re-ordering
             adcData = adcData(:,:,calibrationObj.RxForMIMOProcess,:);            
-            
+            numElements = numel(adcData);
+            disp(numElements);
             %only take TX and RXs required for MIMO data analysis
             % adcData = adcData
             
             if mod(frameIdx, 10)==1
                 fprintf('Processing %3d frame...\n', frameIdx);
             end
+            
             
             
             %perform 2D FFT
@@ -146,7 +172,10 @@ while ~feof(fidList)
                 DopplerFFTOut(:,:,:,i_tx)   = datapath(DopplerFFTObj, rangeFFTOut(:,:,:,i_tx));
                 
             end
-            
+            disp(size(rangeFFTOut));
+            while(true)
+                pause(1);
+            end
   
             % CFAR done along only TX and RX used in MIMO array
             DopplerFFTOut = reshape(DopplerFFTOut,size(DopplerFFTOut,1), size(DopplerFFTOut,2), size(DopplerFFTOut,3)*size(DopplerFFTOut,4));

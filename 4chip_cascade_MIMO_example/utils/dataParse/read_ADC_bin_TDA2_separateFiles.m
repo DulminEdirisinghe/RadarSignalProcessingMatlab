@@ -66,6 +66,8 @@ neg             = logical(bitget(adcData1, 16));
 adcData1(neg)    = adcData1(neg) - 2^16;
 %% 
 adcData1 = adcData1(1:2:end) + sqrt(-1)*adcData1(2:2:end);
+fprintf('RAW ADC BEFORE CALIBRATION = %d + %di\n', ...
+        real(adcData1(1)), imag(adcData1(1)));
 adcData1Complex = reshape(adcData1, numRXPerDevice, numSamplePerChirp, numChirpPerLoop, numLoops);
 adcData1Complex = permute(adcData1Complex, [2 4 1 3]);
 fclose(fp);
