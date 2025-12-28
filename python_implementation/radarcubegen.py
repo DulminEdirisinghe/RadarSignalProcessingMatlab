@@ -103,11 +103,11 @@ def read_adc_bin_tda2_separate_files(
     radar_cube[:, :, 8:12, :] = cubes[2]
     radar_cube[:, :, 12:16, :] = cubes[3]
 
-    print("Radar cube shape:", radar_cube.shape)
-    print("RAW ADC RX0 :", radar_cube[0, 0, 0, 0])
-    print("RAW ADC RX4 :", radar_cube[0, 0, 4, 0])
-    print("RAW ADC RX8 :", radar_cube[0, 0, 8, 0])
-    print("RAW ADC RX12:", radar_cube[0, 0, 12, 0])
+    #print("Radar cube shape:", radar_cube.shape)
+    #print("RAW ADC RX0 :", radar_cube[0, 0, 0, 0])
+    #print("RAW ADC RX4 :", radar_cube[0, 0, 4, 0])
+    #print("RAW ADC RX8 :", radar_cube[0, 0, 8, 0])
+    #print("RAW ADC RX12:", radar_cube[0, 0, 12, 0])
 
     return radar_cube
 
@@ -147,31 +147,45 @@ def print_peak_range(range_fft, fs, slope_MHz_us):
     c = 3e8
     Nfft = range_fft.shape[0]
 
-    slope = slope_MHz_us * 1e12  # Hz/s
+    # Convert slope (MHz/us → Hz/s)
+    slope = slope_MHz_us * 1e12
 
     # EXACT MATLAB rangeBinSize
     rangeBinSize = (c * fs) / (2 * slope * Nfft)
 
+    # Range power profile (integrated over slow-time & RX)
     mag = np.abs(range_fft) ** 2
     profile = np.max(mag, axis=(1, 2))
 
+    # Positive frequencies only
     half = Nfft // 2
     profile = profile[:half]
 
-    k = np.argmax(profile)
+    # -------------------------------------------------
+    # EXACT MATLAB behavior: ignore near-range clutter
+    # -------------------------------------------------
+    min_range_bin = 5          # MATLAB: minRangeBinKeep
+    max_range_bin = half - 1   # keep full usable band
 
-    # Quadratic interpolation (optional but OK)
-    if 0 < k < half - 1:
+    search_profile = profile[min_range_bin:max_range_bin]
+
+    # Peak detection (relative index)
+    k_rel = np.argmax(search_profile)
+
+    # Convert back to absolute FFT bin
+    k = k_rel + min_range_bin
+
+    # Optional quadratic interpolation (safe, MATLAB-consistent)
+    if 1 <= k < half - 1:
         delta = (profile[k + 1] - profile[k - 1]) / (
             2 * (2 * profile[k] - profile[k + 1] - profile[k - 1])
         )
-        k += delta
+        k = k + delta
 
-    # MATLAB: range = (rangeInd + 1) * rangeBinSize
+    # MATLAB indexing: range = (rangeInd + 1) * rangeBinSize
     range_m = (k + 1) * rangeBinSize
 
     print(f"Peak Range = {range_m:.3f} m")
-
 
 # =================================================
 # DIRECTORY MONITOR
@@ -215,7 +229,7 @@ def monitor_directory(
             )
             print(f"\n📥 Capture {idx} | Frames = {nframes}")
 
-            for frame in range(1, nframes + 1):
+            for frame in range(2, nframes + 1):
                 cube = read_adc_bin_tda2_separate_files(
                     data_folder,
                     idx,
