@@ -262,8 +262,8 @@ if __name__ == "__main__":
     numChirpPerLoop = 12
     numLoops = 128
 
-    fs = 8e6                          # Hz
-    slope_MHz_us = 78.9857#29.982000350952148 # MHz/us
+    fs = 10e6                          # Hz
+    slope_MHz_us = 40.024#78.9857#29.982000350952148 # MHz/us
 
     monitor_directory(
         DATA_FOLDER,

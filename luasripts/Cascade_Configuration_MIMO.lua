@@ -58,13 +58,13 @@ test_source_enable              =   0                               -- 0: Disabl
 -- Profile configuration
 local profile_indx              =   0
 local start_freq				=	77								-- GHz
-local slope						=	78.9857 							-- MHz/us
+local slope						=	40.024--78.9857 							-- MHz/us
 local idle_time					=	5								-- us
 local adc_start_time			=	6								-- us
 local adc_samples				=	256						    -- Number of samples per chirp
-local sample_freq				=	8000							-- ksps
+local sample_freq				=	10000							-- ksps
 local ramp_end_time				=	40								-- us
-local rx_gain					=	40								-- dB
+local rx_gain					=	48								-- dB
 local tx0OutPowerBackoffCode    =   0
 local tx1OutPowerBackoffCode    =   0
 local tx2OutPowerBackoffCode    =   0
@@ -72,8 +72,8 @@ local tx0PhaseShifter           =   0
 local tx1PhaseShifter           =   0
 local tx2PhaseShifter           =   0
 local txStartTimeUSec           =   0
-local hpfCornerFreq1            =   175                              -- 0: 175KHz, 1: 235KHz, 2: 350KHz, 3: 700KHz
-local hpfCornerFreq2            =   350                               -- 0: 350KHz, 1: 700KHz, 2: 1.4MHz, 3: 2.8MHz
+local hpfCornerFreq1            =   0                             -- 0: 175KHz, 1: 235KHz, 2: 350KHz, 3: 700KHz
+local hpfCornerFreq2            =   0                               -- 0: 350KHz, 1: 700KHz, 2: 1.4MHz, 3: 2.8MHz
 
 -- Frame configuration	
 local start_chirp_tx			=	0
