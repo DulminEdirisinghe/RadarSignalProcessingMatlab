@@ -73,6 +73,14 @@ class LiveMatlabStyleWavelet:
         voices_per_octave=12,
         contour_levels=10,
         enable_contours=True,
+
+        # -------- DC/Clutter removal --------
+        dc_remove_mode="mean",   # "mean" or "hp"
+        hp_win=4096,             # moving-average window for "hp" mode
+
+        # -------- Time axis control --------
+        time_range_sec=(0.0, None),  # (t_start, t_end) in seconds; None means "to end"
+        time_stride=1,               # decimate in time (1 = no decimation)
     ):
         self.Fs = Fs
         self.group_size = group_size
@@ -85,6 +93,12 @@ class LiveMatlabStyleWavelet:
 
         self.contour_levels = contour_levels
         self.enable_contours = enable_contours
+
+        self.dc_remove_mode = dc_remove_mode
+        self.hp_win = int(hp_win)
+
+        self.time_range_sec = time_range_sec  # (start, end)
+        self.time_stride = int(time_stride)
 
         self.fig = None
         self.ax = None
@@ -128,6 +142,48 @@ class LiveMatlabStyleWavelet:
             pass
         self.cont = None
 
+    # -------- DC / clutter removal --------
+    def _remove_dc(self, x: np.ndarray) -> np.ndarray:
+        mode = (self.dc_remove_mode or "mean").lower()
+
+        if mode == "hp":
+            win = self.hp_win
+            if win is None or win <= 1 or win >= x.size:
+                return x - np.mean(x)
+
+            kernel = np.ones(win, dtype=np.float64) / win
+            xr = np.real(x)
+            xi = np.imag(x)
+            xr_hp = xr - np.convolve(xr, kernel, mode="same")
+            xi_hp = xi - np.convolve(xi, kernel, mode="same")
+            return xr_hp + 1j * xi_hp
+
+        return x - np.mean(x)
+
+    # -------- Time axis slicing --------
+    def _apply_time_range(self, x: np.ndarray):
+        """
+        Slice x based on self.time_range_sec = (t0, t1) seconds relative to start of x.
+        Returns (x_sliced, t_offset_sec)
+        """
+        t0, t1 = self.time_range_sec
+
+        if t0 is None:
+            t0 = 0.0
+        t0 = float(max(0.0, t0))
+
+        if t1 is not None:
+            t1 = float(max(t0, t1))
+
+        i0 = int(round(t0 * self.Fs))
+        i1 = x.size if t1 is None else int(round(t1 * self.Fs))
+
+        i0 = max(0, min(i0, x.size))
+        i1 = max(i0 + 1, min(i1, x.size))
+
+        x = x[i0:i1]
+        return x, (i0 / self.Fs)
+
     def update(self, adcData, frame_index_val, groupIdx):
         self._ensure_fig()
 
@@ -146,15 +202,33 @@ class LiveMatlabStyleWavelet:
         selectedData = adc3[:, startChirp:endChirp, self.ant0]
         x = selectedData.reshape(-1, order="F").astype(np.complex128)
 
-        t = (np.arange(x.size, dtype=np.float64) / self.Fs)
+        # ✅ remove DC/clutter BEFORE wavelets
+        x = self._remove_dc(x)
 
+        # ✅ apply desired time axis range (seconds)
+        x, t_offset = self._apply_time_range(x)
+
+        # ✅ optional decimation (speeds up, reduces time samples)
+        if self.time_stride > 1:
+            x = x[::self.time_stride]
+            # if decimated, effective Fs changes
+            Fs_eff = self.Fs / self.time_stride
+            sampling_period_eff = 1.0 / Fs_eff
+        else:
+            Fs_eff = self.Fs
+            sampling_period_eff = self.sampling_period
+
+        # build time axis (keep absolute offset so plot shows chosen range)
+        t = (np.arange(x.size, dtype=np.float64) / Fs_eff) + t_offset
+
+        # CWT on I and Q separately
         cfs_r, f_out = pywt.cwt(
             np.real(x), self.scales, self.wavelet,
-            sampling_period=self.sampling_period, method="fft"
+            sampling_period=sampling_period_eff, method="fft"
         )
         cfs_i, _ = pywt.cwt(
             np.imag(x), self.scales, self.wavelet,
-            sampling_period=self.sampling_period, method="fft"
+            sampling_period=sampling_period_eff, method="fft"
         )
         cfs = cfs_r + 1j * cfs_i
 
@@ -165,15 +239,14 @@ class LiveMatlabStyleWavelet:
             f = f[::-1]
             P = P[::-1, :]
 
-        # auto-limits
+        # auto-limits (now matches requested time range)
         self.ax.set_xlim(float(t[0]), float(t[-1]))
         self.ax.set_ylim(float(f[0]), float(f[-1]))
 
-        # --- POWER -> dB (much better contrast) ---
+        # power -> dB
         P_db = 10.0 * np.log10(P + 1e-12)
 
-        
-        # --- Robust color limits (ignore extreme outliers) ---
+        # robust color limits
         vmin = float(np.nanpercentile(P_db, 5))
         vmax = float(np.nanpercentile(P_db, 99.5))
         if not np.isfinite(vmin) or not np.isfinite(vmax) or vmax <= vmin:
@@ -182,12 +255,10 @@ class LiveMatlabStyleWavelet:
             if vmax <= vmin:
                 vmax = vmin + 1.0
 
-        # RECOMMENDED: shading="auto" fixes your exact error
-        # plot (use P_db now)
+        # plot
         if self.mesh is None:
             self.mesh = self.ax.pcolormesh(t, f, P_db, shading="auto", cmap="jet")
             self.mesh.set_edgecolor("none")
-            # ✅ ADD COLORBAR ONCE (first time only)
             if not hasattr(self, "cbar"):
                 self.cbar = self.fig.colorbar(self.mesh, ax=self.ax)
                 self.cbar.set_label("Power (dB)")
@@ -196,17 +267,17 @@ class LiveMatlabStyleWavelet:
             self.mesh = self.ax.pcolormesh(t, f, P_db, shading="auto", cmap="jet")
             self.mesh.set_edgecolor("none")
 
-        # ✅ UPDATE COLORBAR TO NEW MESH
         if hasattr(self, "cbar"):
             self.cbar.update_normal(self.mesh)
 
         self.mesh.set_clim(vmin, vmax)
-        self.ax.set_title(f"CWT Power (Group {groupIdx})")
+        self.ax.set_title(f"CWT Power (Group {groupIdx})  |  t=[{t[0]:.6f},{t[-1]:.6f}] s")
 
+        # contours (optional) - use dB to match plot
         self._remove_contours()
         if self.enable_contours:
             self.cont = self.ax.contour(
-                t, f, P,
+                t, f, P_db,
                 levels=self.contour_levels,
                 linewidths=1.0,
                 colors="k",
@@ -231,6 +302,10 @@ if __name__ == "__main__":
 
     idx_pat = re.compile(r"master_(\d{4})_idx\.bin$")
 
+    # ✅ set your desired time axis range here (seconds)
+    # example: show only 0.5 ms to 1.5 ms
+    TIME_RANGE_SEC = (0.0004, 0.0005)
+
     live = LiveMatlabStyleWavelet(
         Fs=fs,
         group_size=GROUP_SIZE,
@@ -241,6 +316,14 @@ if __name__ == "__main__":
         voices_per_octave=12,
         contour_levels=10,
         enable_contours=False,
+
+        # DC removal
+        dc_remove_mode="mean",   # or "hp"
+        hp_win=4096,
+
+        # ✅ time axis range control
+        time_range_sec=TIME_RANGE_SEC,
+        time_stride=1,           # set to 2/4 to decimate for speed
     )
 
     live._ensure_fig()
