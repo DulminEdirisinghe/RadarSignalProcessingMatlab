@@ -290,21 +290,21 @@ def detect_and_display_fast(
 # =================================================
 if __name__ == "__main__":
 
-    DATA_FOLDER = r"C:\radar_receiver\radar_new"
+    DATA_FOLDER = r"C:\ti\mmwave_studio_02_01_01_00\mmWaveStudio\PostProc\rangetest_2m"
 
     Ns = 256
     Nc = 12
     Nl = 128
 
-    fs = 10e6
-    slope_MHz_us = 40.024
+    fs = 8e6
+    slope_MHz_us = 79
 
-    # Plot / performance knobs
+    # Plot 
     Na = 64
-    MAX_PLOT_DETS = 60       # plot only top-K detections
-    PLOT_EVERY_N_FRAMES = 1  # set to 2/3 if plotting is still heavy
+    MAX_PLOT_DETS = 64       
+    PLOT_EVERY_N_FRAMES = 1  
 
-    init_polar_plot(rmax=20)
+    init_polar_plot(rmax=10)
 
     # Precompute windows & axes once
     win_r = np.hanning(Ns).astype(np.float32)
@@ -351,7 +351,7 @@ if __name__ == "__main__":
                 nframes = get_valid_num_frames(os.path.join(DATA_FOLDER, idxf))
                 print(f"\n📥 Capture {idx} | Frames = {nframes}")
 
-                for frame in range(2, nframes + 1):
+                for frame in range(1, nframes + 1):
                     t0 = time.perf_counter()
 
                     cube = read_adc_bin_tda2_separate_files(

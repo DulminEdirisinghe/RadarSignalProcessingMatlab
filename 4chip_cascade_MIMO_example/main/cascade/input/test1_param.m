@@ -35,22 +35,22 @@ ADVANCED_FRAME_CONFIG = 0;
 dataPlatform = 'TDA2'; 
 %pass the chirp parameters associated with test data 
 numADCSample = 2.560000e+02; 
-adcSampleRate = 1.000000e+07; %Hz/s 
+adcSampleRate = 8.000000e+06; %Hz/s 
 startFreqConst = 7.700000e+10; %Hz 
-chirpSlope = 2.998200e+13; %Hz/s 
-chirpIdleTime = 2.000000e-06; %s 
-adcStartTimeConst = 2.760000e-06; %s 
+chirpSlope = 7.898600e+13; %Hz/s 
+chirpIdleTime = 5.000000e-06; %s 
+adcStartTimeConst = 6.000000e-06; %s 
 chirpRampEndTime = 4.000000e-05; %s 
 framePeriodicty = 1.000000e-01; 
 NumDevices = 4; 
 framePeriodicty = 1.000000e-01; 
-frameCount = 1.280000e+02; %s 
+frameCount = 3.000000e+00; %s 
 numChirpsInLoop = 1.200000e+01; %s 
 nchirp_loops = 128; 
 numTxAnt = 12; 
 TxToEnable = [12  11  10   9   8   7   6   5   4   3   2   1];
 numRxToEnable = 16; 
-centerFreq = 7.738377e+01; 
+centerFreq = 7.826378e+01; 
 %pass the slope used for calibration 
 Slope_calib = 78986000000000; 
 

@@ -91,13 +91,13 @@ test_source_enable              =   0                               -- 0: Disabl
 -- Profile configuration
 local profile_indx              =   0
 local start_freq				=	77								-- GHz
-local slope						=	29.982  							-- MHz/us
-local idle_time					=	3.5								-- us
+local slope						=	78.9857  							-- MHz/us
+local idle_time					=	5								-- us
 local adc_start_time			=	6								-- us
 local adc_samples				=	256							    -- Number of samples per chirp
 local sample_freq				=	8000							-- ksps
-local ramp_end_time				=	38.62								-- us
-local rx_gain					=	48								-- dB
+local ramp_end_time				=	40								-- us
+local rx_gain					=	40								-- dB
 local tx0OutPowerBackoffCode    =   0
 local tx1OutPowerBackoffCode    =   0
 local tx2OutPowerBackoffCode    =   0

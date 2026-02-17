@@ -243,8 +243,8 @@ def detect_and_display_fast(
     cand = np.argwhere(range_mask)
     if cand.size == 0:
         print("No detections")
-        #update_polar_plot_scatter_points([], [])
-        return
+        update_polar_plot_scatter_points([], [])
+        return None, None  # Return None for range_bin and rd
 
     # -------------------------------
     # STAGE 2: DOPPLER CFAR (only for ranges that triggered)
@@ -257,8 +257,8 @@ def detect_and_display_fast(
     dets = np.argwhere(final_mask)
     if dets.size == 0:
         print("No detections")
-        #update_polar_plot_scatter_points([], [])
-        return
+        update_polar_plot_scatter_points([], [])
+        return None, None
 
     # -------------------------------
     # PEAK SELECTION (TI-style)
@@ -275,14 +275,13 @@ def detect_and_display_fast(
         idx = np.argpartition(powers, -max_plot_dets)[-max_plot_dets:]
         dets = dets[idx]
 
-
     # -------------------------------
     # ANGLE ESTIMATION only for selected points
     # -------------------------------
     ang = angle_for_detections(rd, dets, Na, win_a)
     if ang is None:
         update_polar_plot_scatter_points([], [])
-        return
+        return r_sel, rd
 
     ang_pow = np.abs(ang) ** 2
     a_idx = np.argmax(ang_pow, axis=1)
@@ -291,28 +290,33 @@ def detect_and_display_fast(
     ranges = (dets[:, 0].astype(np.float32) + 1.0) * range_bin_for_plot
 
     update_polar_plot_scatter_points(angles, ranges)
+    
+    return r_sel, rd  # Return detected range bin for micro-Doppler analysis
 
 
 # =================================================
-# MORLET SCALOGRAM (PER FRAME) - FAST UI UPDATE (no new windows)
-#   Cube layout: (Ns, Nl, Nrx, Nc)
-#   x = cube[:, loop_idx, rx_idx, chirp_idx]
+# SLOW-TIME MORLET SCALOGRAM (MICRO-DOPPLER)
 # =================================================
-def init_morlet_scalogram_plot(
-    Ns: int,
-    fs: float,
+def init_morlet_scalogram_slowtime(
+    Nl: int,
+    Nc: int,
+    prf: float,  # Pulse Repetition Frequency
     scales,
     wavelet: str = "cmor2.5-1.0",
     output: str = "magnitude",   # "power" | "magnitude"
 ):
+    """Initialize scalogram plot for slow-time (micro-Doppler) analysis"""
     global _scalo_fig, _scalo_ax, _scalo_im, _scalo_cbar, _scalo_freqs, _scalo_t
 
-    # dummy signal to get freqs shape once
-    x0 = np.zeros(Ns, dtype=np.complex64)
-    sampling_period = 1.0 / fs
+    # Total slow-time samples
+    N_slow = Nl * Nc
+    
+    # Dummy signal to get freqs shape once
+    x0 = np.zeros(N_slow, dtype=np.complex64)
+    sampling_period = 1.0 / prf
     coeffs0, freqs_hz = pywt.cwt(x0, scales, wavelet, sampling_period=sampling_period)
     _scalo_freqs = freqs_hz.astype(np.float32)
-    _scalo_t = (np.arange(Ns, dtype=np.float32) / fs)
+    _scalo_t = (np.arange(N_slow, dtype=np.float32) / prf)
 
     if output == "magnitude":
         S0 = np.abs(coeffs0)
@@ -323,7 +327,7 @@ def init_morlet_scalogram_plot(
 
     fmin, fmax = float(np.min(_scalo_freqs)), float(np.max(_scalo_freqs))
 
-    _scalo_fig = plt.figure(figsize=(10, 5))
+    _scalo_fig = plt.figure(figsize=(12, 6))
     _scalo_ax = _scalo_fig.add_subplot(111)
 
     _scalo_im = _scalo_ax.imshow(
@@ -336,8 +340,8 @@ def init_morlet_scalogram_plot(
     )
 
     _scalo_ax.set_xlabel("Time (s)")
-    _scalo_ax.set_ylabel("Frequency (Hz)")
-    _scalo_ax.set_title("Morlet CWT Scalogram")
+    _scalo_ax.set_ylabel("Micro-Doppler Frequency (Hz)")
+    _scalo_ax.set_title("Slow-Time Morlet CWT (Micro-Doppler)")
     _scalo_ax.set_yscale("log")
 
     _scalo_cbar = _scalo_fig.colorbar(_scalo_im, ax=_scalo_ax)
@@ -346,32 +350,42 @@ def init_morlet_scalogram_plot(
     plt.show()
 
 
-def update_morlet_scalogram_per_frame(
+def update_morlet_scalogram_slowtime(
     cube: np.ndarray,
-    fs: float,
-    chirp_idx: int,
-    loop_idx: int,
+    prf: float,
+    range_bin: int,
     rx_idx: int,
     scales,
     wavelet: str = "cmor2.5-1.0",
-    mode: str = "mag",   # "complex" | "real" | "mag"
+    mode: str = "complex",   # "complex" | "real" | "mag"
     output: str = "magnitude",   # "power" | "magnitude"
 ):
+    """
+    Update scalogram with slow-time analysis for micro-Doppler
+    
+    cube: (Ns, Nl, Nrx, Nc)
+    Extract slow-time signal: cube[range_bin, :, rx_idx, :] -> (Nl, Nc)
+    Reshape to 1D slow-time vector: (Nl*Nc,) in Fortran order
+    """
     global _scalo_fig, _scalo_ax, _scalo_im, _scalo_freqs, _scalo_t
 
     # cube: (Ns, Nl, Nrx, Nc)
-    x = cube[:, loop_idx, rx_idx, chirp_idx]
+    # Extract slow-time: (Nl, Nc) matrix for this range bin and RX
+    slow_time_2d = cube[range_bin, :, rx_idx, :]
+    
+    # Reshape to 1D slow-time vector (Fortran order to maintain chirp sequence)
+    x = slow_time_2d.reshape(-1, order='F')
 
     if mode == "real":
         x = np.real(x)
     elif mode == "mag":
         x = np.abs(x)
     elif mode == "complex":
-        pass
+        pass  # Keep as complex
     else:
         raise ValueError("mode must be 'complex', 'mag', or 'real'")
 
-    sampling_period = 1.0 / fs
+    sampling_period = 1.0 / prf
     coeffs, freqs_hz = pywt.cwt(x, scales, wavelet, sampling_period=sampling_period)
 
     if output == "magnitude":
@@ -384,14 +398,14 @@ def update_morlet_scalogram_per_frame(
     # Update image (no new window)
     _scalo_im.set_data(S)
 
-    # Optional: auto color scaling each frame (can be a bit jumpy but matches "per frame")
+    # Auto color scaling each frame
     vmin = float(np.min(S))
     vmax = float(np.max(S))
     if vmax > vmin:
         _scalo_im.set_clim(vmin, vmax)
 
     # Update title to show which slice you're plotting
-    _scalo_ax.set_title(f"Morlet CWT | chirp={chirp_idx}, loop={loop_idx}, rx={rx_idx}")
+    _scalo_ax.set_title(f"Slow-Time Morlet CWT | Range Bin={range_bin}, RX={rx_idx}")
 
     _scalo_fig.canvas.draw_idle()
     _scalo_fig.canvas.flush_events()
@@ -402,34 +416,44 @@ def update_morlet_scalogram_per_frame(
 # =================================================
 if __name__ == "__main__":
 
-    DATA_FOLDER = r"C:\ti\mmwave_studio_02_01_01_00\mmWaveStudio\PostProc\rangetest_2m"
-    #"C:\Users\asus\Documents\Projects\FYP\DSP\Matlab\RadarSignalProcessingMatlab"
+    DATA_FOLDER = r"C:\ti\mmwave_studio_02_01_01_00\mmWaveStudio\PostProc\rangetest_4m"
 
     Ns = 256
     Nc = 12
     Nl = 128
 
-    fs = 8e6
+    fs = 8e6  # ADC sampling frequency (fast-time)
     slope_MHz_us = 79
+
+    # Slow-time parameters for micro-Doppler
+    # PRF = 1 / (chirp duration + idle time)
+    # For TI AWR chips, typical chirp time + idle ~ 100-500 us
+    # Assuming ~200 us per chirp -> PRF ~ 5 kHz
+    # Adjust based on your actual chirp configuration!
+    CHIRP_DURATION_US = 200  # microseconds (ADJUST THIS!)
+    PRF = 1e6 / CHIRP_DURATION_US  # Pulse Repetition Frequency in Hz
 
     # Plot / performance knobs
     Na = 64
     MAX_PLOT_DETS = 60
     PLOT_EVERY_N_FRAMES = 1
 
-    # Wavelet knobs (per frame plot REQUIRED)
-    SCALES = np.arange(1, 33)
+    # Wavelet knobs for SLOW-TIME (micro-Doppler)
+    # Scales should cover the micro-Doppler frequencies you expect
+    # For human motion: typically 0-20 Hz
+    # For drones/vehicles: can be up to 100+ Hz
+    SCALES = np.arange(1, 65)  # Wider range for micro-Doppler
     WAVELET = "cmor2.5-1.0"
     W_MODE = "complex"   # "complex" | "real" | "mag"
     W_OUTPUT = "power"   # "power" | "magnitude"
 
-    # Slice to plot (make sure indices are valid)
-    W_CHIRP = 5          # 0..Nc-1
-    W_LOOP = 5           # 0..Nl-1
-    W_RX = 5             # 0..15
+    # RX channel to analyze for micro-Doppler
+    W_RX = 0  # 0..15
 
+    # Initialize plots
     init_polar_plot(rmax=20)
-    init_morlet_scalogram_plot(Ns=Ns, fs=fs, scales=SCALES, wavelet=WAVELET, output=W_OUTPUT)
+    init_morlet_scalogram_slowtime(Nl=Nl, Nc=Nc, prf=PRF, scales=SCALES, 
+                                     wavelet=WAVELET, output=W_OUTPUT)
 
     # Precompute windows & axes once
     win_r = np.hanning(Ns).astype(np.float32)
@@ -449,6 +473,14 @@ if __name__ == "__main__":
     idx_pat = re.compile(r"master_(\d{4})_idx\.bin$")
 
     frame_counter = 0
+
+    print(f"\n{'='*60}")
+    print(f"SLOW-TIME MICRO-DOPPLER ANALYSIS")
+    print(f"{'='*60}")
+    print(f"PRF: {PRF:.2f} Hz")
+    print(f"Slow-time samples per frame: {Nl * Nc}")
+    print(f"Max micro-Doppler freq: ±{PRF/2:.2f} Hz")
+    print(f"{'='*60}\n")
 
     while True:
         try:
@@ -473,39 +505,56 @@ if __name__ == "__main__":
                     # cube shape: (Ns, Nl, 16, Nc)
                     frame_counter += 1
 
-                    # ---- PER FRAME SCALOGRAM (required) ----
-                    for loop_idx in range(Nl):
-                        for rx_idx in range(16):
-                            update_morlet_scalogram_per_frame(
-                                cube, fs=fs,
-                                chirp_idx=W_CHIRP,
-                                loop_idx=loop_idx,
-                                rx_idx=rx_idx,
+                    # ---- RANGE FFT + DETECTIONS ----
+                    rng = range_fft_fast(cube, Ns, win_r)
+
+                    if (frame_counter % PLOT_EVERY_N_FRAMES) == 0:
+                        print(f"[{idx} | Frame {frame}] ", end="")
+                        detected_range_bin, rd = detect_and_display_fast(
+                            rng, Nl, Nc, fs, slope_MHz_us,
+                            win_d, win_a,
+                            angle_axis,
+                            range_bin_for_plot,
+                            rbin_for_print,
+                            Na=Na,
+                            max_plot_dets=MAX_PLOT_DETS
+                        )
+
+                        # ---- SLOW-TIME MICRO-DOPPLER ANALYSIS ----
+                        # Only analyze if we have a valid detection
+                        if detected_range_bin is not None:
+                            # Use the detected range bin for micro-Doppler analysis
+                            update_morlet_scalogram_slowtime(
+                                cube, 
+                                prf=PRF,
+                                range_bin=detected_range_bin,
+                                rx_idx=W_RX,
                                 scales=SCALES,
                                 wavelet=WAVELET,
                                 mode=W_MODE,
                                 output=W_OUTPUT
-                    )
-
-                    # ---- RANGE FFT + DETECTIONS ----
-                #     rng = range_fft_fast(cube, Ns, win_r)
-
-                #     if (frame_counter % PLOT_EVERY_N_FRAMES) == 0:
-                #         print(f"[{idx} | Frame {frame}] ", end="")
-                #         detect_and_display_fast(
-                #             rng, Nl, Nc, fs, slope_MHz_us,
-                #             win_d, win_a,
-                #             angle_axis,
-                #             range_bin_for_plot,
-                #             rbin_for_print,
-                #             Na=Na,
-                #             max_plot_dets=MAX_PLOT_DETS
-                #         )
+                            )
+                        else:
+                            # If no detection, you could analyze a fixed range bin
+                            update_morlet_scalogram_slowtime(
+                                cube, 
+                                prf=PRF,
+                                range_bin=50,
+                                rx_idx=W_RX,
+                                scales=SCALES,
+                                wavelet=WAVELET,
+                                mode=W_MODE,
+                                output=W_OUTPUT
+                            )
+                            # or skip the update
+                            pass
 
                 processed.add(idx)
                 print(f"✅ Capture {idx} done")
 
         except Exception as e:
             print("⚠️ Error:", e)
+            import traceback
+            traceback.print_exc()
 
         time.sleep(0.05)

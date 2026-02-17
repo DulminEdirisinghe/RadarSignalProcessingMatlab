@@ -56,7 +56,124 @@ testList = strcat(input_path,'testList.txt');
 %path for input folder
 fidList = fopen(testList,'r');
 testID = 1;
+function plotWaveletForChirps(adcData, outputDir, frame_index_val)
+    % Ensure output directory exists
+    adcData = reshape(adcData, size(adcData,1), size(adcData,2), size(adcData,3) * size(adcData,4)); % Convert to 3D
 
+    if ~exist(outputDir, 'dir')
+        mkdir(outputDir);
+    end
+
+    % Define sampling frequency
+    Fs = 8e6; % 8 MHz
+
+    % Total number of chirps
+    totalChirps = size(adcData, 2);
+
+    % Loop over chirps in groups of 16
+    chirpsPerGroup = 128;
+    numGroups = ceil(totalChirps / chirpsPerGroup);
+
+    for groupIdx = 1:numGroups
+        % Determine chirps in the current group
+        startChirp = (groupIdx - 1) * chirpsPerGroup + 1;
+        endChirp = min(groupIdx * chirpsPerGroup, totalChirps);
+
+        % Select data for the current chirp group
+        selectedData = adcData(:, startChirp:endChirp, 1); % Assuming antenna index 1
+
+        % Flatten the data and convert to complex double
+        flattenedData = complex(double(real(selectedData(:))), double(imag(selectedData(:))));
+
+        % Define time vector
+        t = (0:length(flattenedData) - 1) / Fs;
+
+        % Perform Continuous Wavelet Transform (CWT)
+        [cfs_real, f_real] = cwt(real(flattenedData), Fs);
+        [cfs_imag, f_imag] = cwt(imag(flattenedData), Fs);
+
+        % Compute magnitude of wavelet coefficients
+        cfs_magnitude = abs(cfs_real + 1i * cfs_imag);
+
+        % Third plot: Magnitude of wavelet coefficients
+       figure;
+        h_mag = pcolor(t, f_real, abs(cfs_magnitude).^2);
+        set(h_mag, 'EdgeColor', 'none');
+        colormap jet;
+        %colorbar;
+
+        % Remove x and y axis labels and title
+        xlabel('Time (s)');
+        ylabel('Frequency (Hz)');
+        title(sprintf('CWT Power (Group %d)', groupIdx));
+
+       
+        % ---- Tick marks (measures) ----
+        xticks(linspace(0, 2e-4, 5));          % 0, 0.5e-4, 1e-4, 1.5e-4, 2e-4
+        yticks(0:1e6:5e6);                     % 0 to 5 MHz in 1 MHz steps
+        
+        % Make ticks readable (show MHz on y, microseconds on x)
+        ax = gca;
+        ax.XAxis.Exponent = 0;
+        ax.YAxis.Exponent = 0;
+
+        box on;
+        grid on;
+        % Set limits
+        ylim([0 5e6]);
+        xlim([0 2e-4]);
+
+        % Overlay contour lines
+        hold on;
+        contour(t, f_real, abs(cfs_magnitude).^2, 'LineWidth', 1, 'LineColor', 'k'); % Black contour lines
+        hold off;
+
+        % Save the plot without axis and labels
+        saveas(gcf, fullfile(outputDir, sprintf('imag%d_wavelet%d_magnitude.png',frame_index_val,groupIdx)));
+
+        % Close figure to avoid open figure windows
+        close(gcf);
+              
+    end
+
+    disp('Wavelet plots (real, imaginary, and magnitude with contours) for all chirps have been generated and saved.');
+end
+function plotWaveletForRangeBins(rangeFFT)
+    % Define wavelet and widths for CWT
+    numSamplePerChirp = 256;    % Number of samples per chirp
+    numChirpPerLoop = 12;       % Number of chirps per loop
+    numLoops = 128;              % Number of loops per frame
+    numRXPerDevice = 4;         % Number of receiving channels per device
+    numDevices = 4;             % Number of devices in the cascade (if needed)
+    sample_rate = 8e6;          % Sampling rate (in Hz)
+    wavelet = 'cmor2.5-1.0';  % Complex Morlet wavelet
+    disp(size(rangeFFT));
+    first_chirp_first_loop = squeeze(rangeFFT(5, :, 1, 1));
+    first_chirp_first_loop = first_chirp_first_loop(:);   % force vector
+    % Define time-sampled array (in seconds) based on sampling rate
+    Tc  = (45) * 1e-6;  % 45 us
+    PRF = 1 / Tc;                              % 22.22 kHz
+    
+    time_sampled = (0:length(first_chirp_first_loop)-1) / PRF; 
+    [cwtmatr, freqs_new] = cwt(first_chirp_first_loop, sample_rate);
+    % Take absolute value of complex result to get magnitude
+    cwtmatr = abs(cwtmatr(:,:,1));
+    disp(size(cwtmatr(:,:,1)));
+    % Plot the scaleogram (CWT result)
+    figure;
+    pcolor(time_sampled, freqs_new, cwtmatr);
+    shading interp;  % Smoothing the plot
+    set(gca, 'YScale', 'log');  % Set logarithmic scale for frequency axis
+    
+    xlabel('Time (s)');  % Label time axis in seconds
+    ylabel('Frequency (Hz)');  % Label frequency axis in Hz
+    title('CWT (Scaleogram) of First Chirp Signal');
+    colormap('jet');
+    colorbar;
+    outputDir = 'C:\Users\asus\Documents\Projects\FYP\DSP\Matlab\RadarSignalProcessingMatlab\4chip_cascade_MIMO_example';
+    saveas(gcf, fullfile(outputDir, sprintf('range%d_wavelet_slow.png', 4)));
+
+end
 while ~feof(fidList)
     
     %% get each test vectors within the test list
@@ -153,7 +270,8 @@ while ~feof(fidList)
             disp(numElements);
             %only take TX and RXs required for MIMO data analysis
             % adcData = adcData
-            
+            outputDir = 'C:\Users\asus\Documents\Projects\FYP\DSP\Matlab\RadarSignalProcessingMatlab\4chip_cascade_MIMO_example';
+            plotWaveletForChirps(adcData, outputDir, frameIdx);
             if mod(frameIdx, 10)==1
                 fprintf('Processing %3d frame...\n', frameIdx);
             end
@@ -173,10 +291,10 @@ while ~feof(fidList)
                 
             end
             disp(size(rangeFFTOut));
-            while(true)
-                pause(1);
-            end
-  
+%            while(true)
+%                pause(1);
+%            end
+            %plotWaveletForRangeBins(rangeFFTOut);
             % CFAR done along only TX and RX used in MIMO array
             DopplerFFTOut = reshape(DopplerFFTOut,size(DopplerFFTOut,1), size(DopplerFFTOut,2), size(DopplerFFTOut,3)*size(DopplerFFTOut,4));
             
