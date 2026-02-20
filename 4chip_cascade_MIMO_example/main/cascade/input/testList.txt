@@ -1,3 +1,3 @@
-C:\ti\mmwave_studio_02_01_01_00\mmWaveStudio\PostProc\config_test_high_bandwidth_comparison\
+C:\ti\mmwave_studio_02_01_01_00\mmWaveStudio\PostProc\moving_away_from_1.5_4m_panton\
 .\input\calibrateResults_dummy.mat
 .\paramGen\module_param.m

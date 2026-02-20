@@ -19,7 +19,7 @@
 -- Example: 100ms x 30 frames = 3000ms base time
 capture_time                    = 3000--6000      -- ms - INCREASED: Ensure all frames complete
 frame_end_wait                  = 4000      -- ms - INCREASED: Wait longer for Frame End event
-inter_loop_time                 = 2000--3000      -- ms - INCREASED: More time for file flush
+inter_loop_time                 = 1--3000      -- ms - INCREASED: More time for file flush
 
 -- Loop control
 num_loops                       = -1        -- Set to -1 for infinite continuous capture
@@ -27,7 +27,7 @@ num_loops                       = -1        -- Set to -1 for infinite continuous
 -- File management
 n_files_allocation              = 0         -- MUST BE 0 for correct file sizes
 data_packaging                  = 0         -- 0: 16-bit, 1: 12-bit
-capture_directory               = "test_capture_incoming"
+capture_directory               = "cont_send"
 num_frames_to_capture           = 0         -- 0: use default from profile
 
 -- Framing type

@@ -18,11 +18,11 @@ function Ask-YesNo($msg) {
 $RadarNewDir = "C:\radar_receiver\radar_new"
 
 $ReceiverScript = "C:\Users\asus\Documents\Projects\FYP\DSP\Matlab\RadarSignalProcessingMatlab\python_implementation\dataTransfer\radar_receiver.py"
-$PlotScript     = "C:\Users\asus\Documents\Projects\FYP\DSP\Matlab\RadarSignalProcessingMatlab\python_implementation\processing\plottargets_opt.py"
+$PlotScript     = "C:\Users\asus\Documents\Projects\FYP\DSP\Matlab\RadarSignalProcessingMatlab\python_implementation\processing\wavelet_live_plot.py"
 
 $RemoteIP     = "192.168.33.180"
 $RemoteHome   = "/home/root"
-$RemoteFolder = "/mnt/ssd/test_capture_incoming"
+$RemoteFolder = "/mnt/ssd/cont_send"
 $SshOpts      = "-oHostKeyAlgorithms=+ssh-rsa -oPubkeyAcceptedAlgorithms=+ssh-rsa"
 
 # ----------------

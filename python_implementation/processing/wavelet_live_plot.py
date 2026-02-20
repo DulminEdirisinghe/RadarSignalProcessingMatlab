@@ -1,13 +1,14 @@
 import numpy as np
 import os
 import re
+import time
 import matplotlib
 matplotlib.use("TkAgg", force=True)
 import matplotlib.pyplot as plt
 import pywt
 
 # =================================================
-# USER RADAR CONFIG (from your Lua)
+# USER RADAR CONFIG (from your Lua)  [UNCHANGED]
 # =================================================
 START_FREQ_GHZ      = 77.0
 SLOPE_MHZ_PER_US    = 78.9857
@@ -24,15 +25,15 @@ NC_CHIRPS_PER_LOOP  = (END_CHIRP_TX - START_CHIRP_TX + 1)  # Nc = 12
 # Speed of light
 C0 = 299_792_458.0
 
-# Derived
+# Derived  [UNCHANGED]
 FS_FAST = SAMPLE_FREQ_KSPS * 1e3  # Hz
 SLOPE_HZ_PER_S = SLOPE_MHZ_PER_US * 1e12  # (MHz/us) -> Hz/s
-TC_US = IDLE_TIME_US + RAMP_END_TIME_US   # chirp repetition time (approx) in us
-PRF_CHIRP_HZ = 1.0 / (TC_US * 1e-6)       # chirps/sec
-SLOW_FS_LOOPS_HZ = PRF_CHIRP_HZ / NC_CHIRPS_PER_LOOP  # loops/sec (what we use for Doppler CWT)
+TC_US = IDLE_TIME_US + RAMP_END_TIME_US
+PRF_CHIRP_HZ = 1.0 / (TC_US * 1e-6)
+SLOW_FS_LOOPS_HZ = PRF_CHIRP_HZ / NC_CHIRPS_PER_LOOP
 
 # =================================================
-# IDX FILE READER
+# IDX FILE READER  [UNCHANGED]
 # =================================================
 def get_valid_num_frames(idx_file_path):
     with open(idx_file_path, "rb") as f:
@@ -40,7 +41,7 @@ def get_valid_num_frames(idx_file_path):
         return int(h32[3])
 
 # =================================================
-# READ BIN FILE (4 RX)
+# READ BIN FILE (4 RX)  [UNCHANGED]
 # =================================================
 def read_bin_file(file_path, frame_idx, Ns, Nc, Nl, numRX=4):
     samples_per_frame = Ns * Nc * Nl * numRX * 2
@@ -59,7 +60,7 @@ def read_bin_file(file_path, frame_idx, Ns, Nc, Nl, numRX=4):
     return iq
 
 # =================================================
-# READ CASCADE (16 RX)
+# READ CASCADE (16 RX)  [UNCHANGED]
 # =================================================
 _cube_buf = None
 
@@ -84,13 +85,9 @@ def read_adc_bin_tda2_separate_files(folder, idx, frame, Ns, Nc, Nl):
     return _cube_buf
 
 # =================================================
-# SIMPLE 1D CA-CFAR
+# SIMPLE 1D CA-CFAR  [UNCHANGED]
 # =================================================
 def ca_cfar_1d(power, guard=4, train=16, pfa=1e-3):
-    """
-    power: 1D array (linear power)
-    returns: thresh (NaN at edges), det boolean
-    """
     x = np.asarray(power, dtype=np.float64)
     N = x.size
     thresh = np.full(N, np.nan, dtype=np.float64)
@@ -118,7 +115,7 @@ def ca_cfar_1d(power, guard=4, train=16, pfa=1e-3):
     return thresh, det
 
 # =================================================
-# LIVE WAVELET PLOTTER (your original way, with time range + DC removal)
+# LIVE WAVELET PLOTTER (FAST-TIME)  [UNCHANGED]
 # =================================================
 class LiveMatlabStyleWavelet:
     def __init__(
@@ -132,9 +129,9 @@ class LiveMatlabStyleWavelet:
         voices_per_octave=12,
         contour_levels=10,
         enable_contours=True,
-        dc_remove_mode="mean",   # "mean" or "hp"
+        dc_remove_mode="mean",
         hp_win=4096,
-        time_range_sec=(0.0, None),  # (t_start, t_end) seconds on flattened fast-time signal
+        time_range_sec=(0.0, None),
         time_stride=1,
     ):
         self.Fs = float(Fs)
@@ -242,13 +239,9 @@ class LiveMatlabStyleWavelet:
         selectedData = adc3[:, startChirp:endChirp, self.ant0]
         x = selectedData.reshape(-1, order="F").astype(np.complex128)
 
-        # DC removal
         x = self._remove_dc(x)
-
-        # time-range slicing on x
         x, t_offset = self._apply_time_range(x)
 
-        # decimation if needed
         if self.time_stride > 1:
             x = x[::self.time_stride]
             Fs_eff = self.Fs / self.time_stride
@@ -300,7 +293,7 @@ class LiveMatlabStyleWavelet:
             self.cbar.update_normal(self.mesh)
 
         self.mesh.set_clim(vmin, vmax)
-        self.ax.set_title(f"CWT Power (Group {groupIdx}) | Frame {frame_index_val}")
+        self.ax.set_title(f"FAST-TIME CWT Power (Group {groupIdx}) | Frame {frame_index_val}")
 
         self._remove_contours()
         if self.enable_contours:
@@ -310,43 +303,38 @@ class LiveMatlabStyleWavelet:
         self.fig.canvas.flush_events()
 
 # =================================================
-# RANGE FFT + CFAR (range in meters) + Doppler-domain CWT at selected range bin
+# RANGE FFT + CFAR (range in meters) + DOPPLER-domain CWT  [UNCHANGED]
 # =================================================
 class LiveRangeCfarDopplerWavelet:
     def __init__(
         self,
         Fs_fast,
         slope_hz_per_s,
-        group_size=128,               # loops per group (Nl side)
+        group_size=128,
         antenna_index_1based=1,
 
-        # Range FFT
-        nfft_range=512,
+        nfft_range=256,
         range_window="hann",
 
-        # CFAR
         cfar_guard=4,
         cfar_train=16,
         cfar_pfa=1e-3,
 
-        # Slow-time sampling (loops/sec)
         slow_fs_hz=SLOW_FS_LOOPS_HZ,
 
-        # Doppler CWT
         wavelet="cmor1.0-1.5",
         fmin_doppler_hz=5.0,
-        fmax_doppler_hz=0.45,        # if <1.0 => fraction of slow_fs, else Hz
+        fmax_doppler_hz=0.45,
         voices_per_octave=12,
 
-        # DC removal on slow-time sequence
-        dc_remove_mode="mean",       # "mean" or "hp"
+        dc_remove_mode="mean",
         hp_win=31,
 
-        # slow-time (within-group) time axis range
         time_range_sec=(0.0, None),
 
-        # pick which chirp index in Nc (0..Nc-1) to use for range FFT / slow-time
-        nc_sel=0,
+        doppler_nc_sel=0,
+
+        range_detect_mode="sum_power",
     ):
         self.Fs_fast = float(Fs_fast)
         self.slope = float(slope_hz_per_s)
@@ -371,9 +359,10 @@ class LiveRangeCfarDopplerWavelet:
         self.hp_win = int(hp_win)
 
         self.time_range_sec = time_range_sec
-        self.nc_sel = int(nc_sel)
 
-        # figures
+        self.doppler_nc_sel = int(doppler_nc_sel)
+        self.range_detect_mode = str(range_detect_mode).lower().strip()
+
         self.fig_r = None
         self.ax_r = None
         self.line_r = None
@@ -420,7 +409,7 @@ class LiveRangeCfarDopplerWavelet:
         if self.fig_w is None:
             self.fig_w, self.ax_w = plt.subplots(figsize=(12, 6))
             plt.set_cmap("jet")
-            self.ax_w.set_title("Doppler-domain CWT (at selected range bin)")
+            self.ax_w.set_title("Doppler-domain CWT (complex, same-TX across loops)")
             self.ax_w.set_xlabel("Slow time (s)")
             self.ax_w.set_ylabel("Doppler frequency (Hz)")
             self.ax_w.grid(True)
@@ -459,23 +448,17 @@ class LiveRangeCfarDopplerWavelet:
         return x[i0:i1], (i0 / self.slow_fs_hz)
 
     def _range_axis_m(self, K):
-        # beat frequency per bin (Hz): f_b = k * Fs / NFFT
         fb = (np.arange(K, dtype=np.float64) * self.Fs_fast) / float(self.nfft_range)
-        # range (m): R = c * f_b / (2 * slope)
         R = (C0 * fb) / (2.0 * self.slope)
         return R
 
     def update(self, adcData, frame_index_val, groupIdx):
-        """
-        adcData shape: (Ns, Nl, Nrx, Nc)
-        """
         self._ensure_figs()
 
         Ns, Nl, Nrx, Nc = adcData.shape
         ant = self.ant0
-        nc_sel = int(np.clip(self.nc_sel, 0, Nc - 1))
+        dop_nc = int(np.clip(self.doppler_nc_sel, 0, Nc - 1))
 
-        # group over loops
         numGroups = int(np.ceil(Nl / self.group_size))
         if groupIdx < 1 or groupIdx > numGroups:
             return
@@ -483,26 +466,25 @@ class LiveRangeCfarDopplerWavelet:
         e = min(groupIdx * self.group_size, Nl)
         M = e - s
 
-        # fast-time signal per loop (Ns x M)
-        x_fast = adcData[:, s:e, ant, nc_sel].astype(np.complex128)
+        x_all = adcData[:, s:e, ant, :].astype(np.complex128)
 
-        # Range FFT
         nfft = self.nfft_range
         if self.range_window == "hann":
-            w = np.hanning(Ns).astype(np.float64)
-            X = np.fft.fft(x_fast * w[:, None], n=nfft, axis=0)
+            w = np.hanning(Ns).astype(np.float64)[:, None, None]
+            X_all = np.fft.fft(x_all * w, n=nfft, axis=0)
         else:
-            X = np.fft.fft(x_fast, n=nfft, axis=0)
+            X_all = np.fft.fft(x_all, n=nfft, axis=0)
 
-        # Positive range bins
         K = nfft // 2
-        Xp = X[:K, :]  # (K, M)
+        Xp_all = X_all[:K, :, :]
 
-        # Range profile (avg power across loops)
-        P_rng = np.mean(np.abs(Xp) ** 2, axis=1) + 1e-12
+        if self.range_detect_mode == "single":
+            P_rng = np.mean(np.abs(Xp_all[:, :, dop_nc])**2, axis=1) + 1e-12
+        else:
+            P_rng = np.mean(np.mean(np.abs(Xp_all)**2, axis=1), axis=1) + 1e-12
+
         P_rng_db = 10.0 * np.log10(P_rng)
 
-        # CFAR
         thr, det = ca_cfar_1d(P_rng, guard=self.cfar_guard, train=self.cfar_train, pfa=self.cfar_pfa)
         thr_db = np.full_like(P_rng_db, np.nan)
         ok = np.isfinite(thr)
@@ -515,33 +497,22 @@ class LiveRangeCfarDopplerWavelet:
         else:
             sel_bin = int(np.argmax(P_rng))
 
-        # Selected slow-time sequence at range bin
-        slow_sig = Xp[sel_bin, :]
+        slow_sig = Xp_all[sel_bin, :, dop_nc].astype(np.complex128)
         slow_sig = self._remove_dc_slow(slow_sig)
 
-        # slow-time slicing
         slow_sig, t_offset = self._apply_time_range(slow_sig)
         t = (np.arange(slow_sig.size, dtype=np.float64) / self.slow_fs_hz) + t_offset
 
-        # Doppler-domain CWT
-        cfs_r, f_out = pywt.cwt(
-            np.real(slow_sig),
+        cfs, f_out = pywt.cwt(
+            slow_sig,
             self.doppler_scales,
             self.wavelet,
             sampling_period=self.doppler_sampling_period,
             method="fft",
         )
-        cfs_i, _ = pywt.cwt(
-            np.imag(slow_sig),
-            self.doppler_scales,
-            self.wavelet,
-            sampling_period=self.doppler_sampling_period,
-            method="fft",
-        )
-        cfs = cfs_r + 1j * cfs_i
+
         P = (np.abs(cfs) ** 2).astype(np.float64)
         f = f_out.astype(np.float64)
-
         if f[0] > f[-1]:
             f = f[::-1]
             P = P[::-1, :]
@@ -555,29 +526,21 @@ class LiveRangeCfarDopplerWavelet:
             if vmax <= vmin:
                 vmax = vmin + 1.0
 
-        # Range axis in meters
         Rm = self._range_axis_m(K)
         sel_range_m = float(Rm[sel_bin])
 
-        # Plot range + CFAR (in meters)
         if self.line_r is None:
-            (self.line_r,) = self.ax_r.plot(Rm, P_rng_db, lw=1.5, label="Range power")
+            (self.line_r,) = self.ax_r.plot(Rm, P_rng_db, lw=1.5, label="Range power (agg)")
             (self.line_thr,) = self.ax_r.plot(Rm, thr_db, lw=1.0, label="CFAR threshold")
-
             self.scatter_det = self.ax_r.scatter(Rm[det_idx], P_rng_db[det_idx], s=20, label="Detections")
             self.vline_sel = self.ax_r.axvline(sel_range_m, linestyle="--", linewidth=1.5,
                                                label=f"Selected {sel_range_m:.2f} m")
             self.ax_r.legend(loc="best")
         else:
-            self.line_r.set_ydata(P_rng_db)
-            self.line_r.set_xdata(Rm)
-
-            self.line_thr.set_ydata(thr_db)
-            self.line_thr.set_xdata(Rm)
-
+            self.line_r.set_xdata(Rm); self.line_r.set_ydata(P_rng_db)
+            self.line_thr.set_xdata(Rm); self.line_thr.set_ydata(thr_db)
             self.scatter_det.remove()
             self.scatter_det = self.ax_r.scatter(Rm[det_idx], P_rng_db[det_idx], s=20)
-
             self.vline_sel.set_xdata([sel_range_m, sel_range_m])
 
         self.ax_r.set_xlim(float(Rm[0]), float(Rm[-1]))
@@ -585,10 +548,9 @@ class LiveRangeCfarDopplerWavelet:
         y_max = float(np.nanmax(P_rng_db)) + 5.0
         self.ax_r.set_ylim(y_min, y_max)
         self.ax_r.set_title(
-            f"Range FFT + CFAR | Frame {frame_index_val} Group {groupIdx} | Selected range = {sel_range_m:.2f} m"
+            f"Range FFT + CFAR | Frame {frame_index_val} Group {groupIdx} | Range={sel_range_m:.2f} m | Doppler chirp={dop_nc}"
         )
 
-        # Plot Doppler CWT
         self.ax_w.set_xlim(float(t[0]), float(t[-1]))
         self.ax_w.set_ylim(float(f[0]), float(f[-1]))
 
@@ -605,19 +567,18 @@ class LiveRangeCfarDopplerWavelet:
 
         self.mesh.set_clim(vmin, vmax)
         self.ax_w.set_title(
-            f"Doppler CWT @ range {sel_range_m:.2f} m (bin {sel_bin}) | Frame {frame_index_val} Group {groupIdx}"
+            f"Doppler CWT (complex, same-TX) @ {sel_range_m:.2f} m | bin {sel_bin} | Frame {frame_index_val} Group {groupIdx} | chirp={dop_nc}"
         )
 
         self.fig_r.canvas.draw(); self.fig_r.canvas.flush_events()
         self.fig_w.canvas.draw(); self.fig_w.canvas.flush_events()
 
 # =================================================
-# MAIN
+# MAIN  (NEW-FILE DETECTION = YOUR OLD APPROACH)
 # =================================================
 if __name__ == "__main__":
-    DATA_FOLDER = r"C:\ti\mmwave_studio_02_01_01_00\mmWaveStudio\PostProc\rangetest_2m"
+    DATA_FOLDER = r"C:\ti\mmwave_studio_02_01_01_00\mmWaveStudio\PostProc\moving_away_from_1.5_4m_panton"
 
-    # Data dimensions (match your capture)
     Ns = ADC_SAMPLES
     Nc = NC_CHIRPS_PER_LOOP
     Nl = NCHIRP_LOOPS
@@ -625,25 +586,23 @@ if __name__ == "__main__":
     GROUP_SIZE = 128
     SHOW_GROUP = 1
 
-    # ---- time axis control for original wavelet (flattened fast-time) ----
-    # Example: show only 0.5 ms to 1.5 ms on that flattened signal
-    FAST_CWT_TIME_RANGE_SEC = (0.0000, 0.0002)
-
-    # ---- time axis control for Doppler wavelet (slow-time) ----
-    # This is within one group of loops: total slow-time length is M / SLOW_FS_LOOPS_HZ
+    FAST_CWT_TIME_RANGE_SEC = (0.0, 0.0002)
     DOPPLER_TIME_RANGE_SEC = (0.0, None)
+
+    DOPPLER_CHIRP_INDEX = 0
 
     idx_pat = re.compile(r"master_(\d{4})_idx\.bin$")
 
     print("Derived timing:")
     print(f"  Tc_us           = {TC_US:.3f} us")
     print(f"  PRF_chirp_hz     = {PRF_CHIRP_HZ:.3f} Hz")
-    print(f"  slow_fs_loops_hz = {SLOW_FS_LOOPS_HZ:.3f} Hz (Doppler sampling across loops)")
-    print("Derived range:")
-    rng_res_m = C0 * (FS_FAST / 512.0) / (2.0 * SLOPE_HZ_PER_S)  # if nfft_range=512
-    print(f"  approx range-bin spacing (nfft=512) ~ {rng_res_m:.4f} m")
+    print(f"  slow_fs_loops_hz = {SLOW_FS_LOOPS_HZ:.3f} Hz (same-TX across loops; PRF_chirp/Nc)")
+    print("Range model:")
+    print(f"  Fs_fast          = {FS_FAST:.1f} Hz")
+    print(f"  slope            = {SLOPE_HZ_PER_S:.3e} Hz/s")
+    print(f"  Doppler chirp index (TX selector) = {DOPPLER_CHIRP_INDEX}")
 
-    # Original way of wavelet (kept)
+    # 1) FAST-TIME CWT
     live_fast_cwt = LiveMatlabStyleWavelet(
         Fs=FS_FAST,
         group_size=GROUP_SIZE,
@@ -660,61 +619,71 @@ if __name__ == "__main__":
         time_stride=1,
     )
 
-    # Range FFT + CFAR + Doppler-domain CWT (range in meters)
+    # 2) RANGE FFT + CFAR + DOPPLER CWT
     live_range_dopp = LiveRangeCfarDopplerWavelet(
         Fs_fast=FS_FAST,
         slope_hz_per_s=SLOPE_HZ_PER_S,
         group_size=GROUP_SIZE,
         antenna_index_1based=1,
-
-        nfft_range=512,
+        nfft_range=256,
         range_window="hann",
-
         cfar_guard=4,
         cfar_train=16,
         cfar_pfa=1e-3,
-
-        slow_fs_hz=SLOW_FS_LOOPS_HZ,       # computed from your config
+        slow_fs_hz=SLOW_FS_LOOPS_HZ,
         wavelet="cmor1.0-1.5",
         fmin_doppler_hz=5.0,
-        fmax_doppler_hz=0.45,              # fraction of slow_fs (kept below Nyquist)
+        fmax_doppler_hz=0.9,
         voices_per_octave=12,
-
-        dc_remove_mode="mean",             # try "hp" if stationary clutter dominates
+        dc_remove_mode="mean",
         hp_win=31,
-
         time_range_sec=DOPPLER_TIME_RANGE_SEC,
-        nc_sel=0,                          # use chirp index 0 in Nc (change if needed)
+        doppler_nc_sel=DOPPLER_CHIRP_INDEX,
+        range_detect_mode="sum_power",
     )
 
-    # Scan idx files
-    idx_files = []
-    for entry in os.scandir(DATA_FOLDER):
-        if entry.is_file():
-            m = idx_pat.match(entry.name)
-            if m:
-                idx_files.append((m.group(1), entry.name))
-    idx_files.sort(key=lambda x: x[0])
+    processed = set()
 
-    for idx, idxf in idx_files:
-        nframes = get_valid_num_frames(os.path.join(DATA_FOLDER, idxf))
-        print(f"\n📥 Capture {idx} | Frames = {nframes}")
+    while True:
+        try:
+            # YOUR OLD STYLE: scan current folder, detect new master_XXXX_idx.bin
+            idx_files = []
+            for entry in os.scandir(DATA_FOLDER):
+                if entry.is_file():
+                    m = idx_pat.match(entry.name)
+                    if m:
+                        idx_files.append((m.group(1), entry.name))
 
-        for frame in range(1, nframes + 1):
-            cube = read_adc_bin_tda2_separate_files(DATA_FOLDER, idx, frame, Ns, Nc, Nl)
+            idx_files.sort(key=lambda x: x[0])
 
-            numGroups = int(np.ceil(Nl / GROUP_SIZE))
-            group_to_show = max(1, min(SHOW_GROUP, numGroups))
+            for idx, idxf in idx_files:
+                if idx in processed:
+                    continue
 
-            print(f"[{idx} | Frame {frame}] plots... (Group {group_to_show}/{numGroups})")
+                nframes = get_valid_num_frames(os.path.join(DATA_FOLDER, idxf))
+                print(f"\n📥 Capture {idx} | Frames = {nframes}")
 
-            # 1) keep your previous way
-            live_fast_cwt.update(cube, frame_index_val=frame, groupIdx=group_to_show)
+                for frame in range(1, nframes + 1):
+                    cube = read_adc_bin_tda2_separate_files(DATA_FOLDER, idx, frame, Ns, Nc, Nl)
 
-            # 2) new: range FFT + CFAR (meters) + Doppler-domain wavelet at detected range
-            live_range_dopp.update(cube, frame_index_val=frame, groupIdx=group_to_show)
+                    numGroups = int(np.ceil(Nl / GROUP_SIZE))
+                    group_to_show = max(1, min(SHOW_GROUP, numGroups))
 
-        print(f"✅ Capture {idx} done")
+                    print(f"[{idx} | Frame {frame}] plots... (Group {group_to_show}/{numGroups})")
 
-    print("\n✅ Done. Keeping plot windows open...")
-    plt.show()
+                    live_fast_cwt.update(cube, frame_index_val=frame, groupIdx=group_to_show)
+                    live_range_dopp.update(cube, frame_index_val=frame, groupIdx=group_to_show)
+
+                    # keep UI responsive
+                    plt.pause(0.001)
+
+                processed.add(idx)
+                print(f"✅ Capture {idx} done")
+
+        except Exception as e:
+            print("⚠️ Error:", e)
+
+        time.sleep(0.05)
+
+    # (unreached)
+    # plt.show()
