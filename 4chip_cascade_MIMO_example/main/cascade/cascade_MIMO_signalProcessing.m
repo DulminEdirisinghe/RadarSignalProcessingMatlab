@@ -58,8 +58,13 @@ fidList = fopen(testList,'r');
 testID = 1;
 function plotWaveletForChirps(adcData, outputDir, frame_index_val)
     % Ensure output directory exists
+    fprintf('%f ', squeeze(adcData(1,1,1,:)));
+    fprintf('\n');
+    fprintf('%f ', squeeze(adcData(1,1,:,1)));
+    fprintf('\n');
     adcData = reshape(adcData, size(adcData,1), size(adcData,2), size(adcData,3) * size(adcData,4)); % Convert to 3D
-
+    fprintf('%f ', squeeze(adcData(1,1,1:17)));
+    fprintf('\n');
     if ~exist(outputDir, 'dir')
         mkdir(outputDir);
     end
@@ -97,11 +102,16 @@ function plotWaveletForChirps(adcData, outputDir, frame_index_val)
 
         % Third plot: Magnitude of wavelet coefficients
        figure;
-        h_mag = pcolor(t, f_real, abs(cfs_magnitude).^2);
+        powerMap = abs(cfs_magnitude).^2;
+
+        h_mag = pcolor(t, f_real, powerMap);
         set(h_mag, 'EdgeColor', 'none');
         colormap jet;
         %colorbar;
-
+        % ---- Robust color scaling (ignore extreme outliers) ----
+        cmin = prctile(powerMap(:), 5);    % lower 5%
+        cmax = prctile(powerMap(:), 99);   % upper 99%
+        clim([cmin cmax]);
         % Remove x and y axis labels and title
         xlabel('Time (s)');
         ylabel('Frequency (Hz)');
@@ -148,7 +158,7 @@ function plotWaveletForRangeBins(rangeFFT)
     sample_rate = 8e6;          % Sampling rate (in Hz)
     wavelet = 'cmor2.5-1.0';  % Complex Morlet wavelet
     disp(size(rangeFFT));
-    first_chirp_first_loop = squeeze(rangeFFT(5, :, 1, 1));
+    first_chirp_first_loop = squeeze(rangeFFT(72, :, 1, 1));%51
     first_chirp_first_loop = first_chirp_first_loop(:);   % force vector
     % Define time-sampled array (in seconds) based on sampling rate
     Tc  = (45) * 1e-6;  % 45 us
@@ -294,7 +304,7 @@ while ~feof(fidList)
 %            while(true)
 %                pause(1);
 %            end
-            %plotWaveletForRangeBins(rangeFFTOut);
+            plotWaveletForRangeBins(rangeFFTOut);
             % CFAR done along only TX and RX used in MIMO array
             DopplerFFTOut = reshape(DopplerFFTOut,size(DopplerFFTOut,1), size(DopplerFFTOut,2), size(DopplerFFTOut,3)*size(DopplerFFTOut,4));
             

@@ -577,7 +577,7 @@ class LiveRangeCfarDopplerWavelet:
 # MAIN  (NEW-FILE DETECTION = YOUR OLD APPROACH)
 # =================================================
 if __name__ == "__main__":
-    DATA_FOLDER = r"C:\ti\mmwave_studio_02_01_01_00\mmWaveStudio\PostProc\moving_away_from_1.5_4m_panton"
+    DATA_FOLDER = r"C:\ti\mmwave_studio_02_01_01_00\mmWaveStudio\PostProc\4m_panton"
 
     Ns = ADC_SAMPLES
     Nc = NC_CHIRPS_PER_LOOP
@@ -631,7 +631,7 @@ if __name__ == "__main__":
         cfar_train=16,
         cfar_pfa=1e-3,
         slow_fs_hz=SLOW_FS_LOOPS_HZ,
-        wavelet="cmor1.0-1.5",
+        wavelet="cmor2.5-1.0",
         fmin_doppler_hz=5.0,
         fmax_doppler_hz=0.9,
         voices_per_octave=12,
@@ -646,7 +646,7 @@ if __name__ == "__main__":
 
     while True:
         try:
-            # YOUR OLD STYLE: scan current folder, detect new master_XXXX_idx.bin
+            
             idx_files = []
             for entry in os.scandir(DATA_FOLDER):
                 if entry.is_file():
@@ -678,10 +678,10 @@ if __name__ == "__main__":
                     plt.pause(0.001)
 
                 processed.add(idx)
-                print(f"✅ Capture {idx} done")
+                print(f" Capture {idx} done")
 
         except Exception as e:
-            print("⚠️ Error:", e)
+            print(" Error:", e)
 
         time.sleep(0.05)
 
