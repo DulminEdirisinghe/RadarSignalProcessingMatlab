@@ -17,8 +17,8 @@
 -- Timing parameters - CRITICAL FOR CONSISTENT FILE SIZES
 -- Calculate: Frame_Periodicity_ms x Number_of_Frames + extra buffer
 -- Example: 100ms x 30 frames = 3000ms base time
-capture_time                    = 3000--6000      -- ms - INCREASED: Ensure all frames complete
-frame_end_wait                  = 4000      -- ms - INCREASED: Wait longer for Frame End event
+capture_time                    = 100--3000--6000      -- ms - INCREASED: Ensure all frames complete
+frame_end_wait                  = 10      -- ms - INCREASED: Wait longer for Frame End event
 inter_loop_time                 = 1--3000      -- ms - INCREASED: More time for file flush
 
 -- Loop control
