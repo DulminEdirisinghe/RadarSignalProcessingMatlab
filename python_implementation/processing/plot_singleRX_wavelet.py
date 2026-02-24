@@ -14,7 +14,7 @@ from helpers import *
 
 
 if __name__ == "__main__":
-    DATA_FOLDER = r"C:\radar_receiver\radar_new"
+    DATA_FOLDER = r"C:\ti\mmwave_studio_02_01_01_00\mmWaveStudio\PostProc\phantom_4m_128frame022326"
     GROUP_SIZE = 128
     Ns = ADC_SAMPLES
     Nc = NC_CHIRPS_PER_LOOP

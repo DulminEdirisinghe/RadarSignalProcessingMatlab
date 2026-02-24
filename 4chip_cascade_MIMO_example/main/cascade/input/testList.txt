@@ -1,3 +1,3 @@
-C:\ti\mmwave_studio_02_01_01_00\mmWaveStudio\PostProc\4m_panton\
+C:\ti\mmwave_studio_02_01_01_00\mmWaveStudio\PostProc\phantom_4m_128frame022326\
 .\input\calibrateResults_dummy.mat
 .\paramGen\module_param.m

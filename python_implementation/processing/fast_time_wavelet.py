@@ -172,8 +172,8 @@ class LiveMatlabStyleWavelet:
         Wx_plot = Wx[sort_idx, :]
 
         # Display in dB (keep your live-view scaling behavior)
-        #P_db = 10.0 * np.log10(Wx_plot + 1e-12)
-        P_db = Wx_plot.astype(np.float64)  # Keep as linear magnitude for now, match your snippet's vmin/vmax
+        P_db = 10.0 * np.log10(Wx_plot + 1e-12)
+        #P_db = Wx_plot.astype(np.float64)  # Keep as linear magnitude for now, match your snippet's vmin/vmax
         vmin = float(np.nanpercentile(P_db, 5))
         vmax = float(np.nanpercentile(P_db, 99.5))
         if not np.isfinite(vmin) or not np.isfinite(vmax) or vmax <= vmin:
