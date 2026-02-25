@@ -37,7 +37,7 @@ num_loops						=	1
 
 n_files_allocation              =   0
 data_packaging                  =   0                                -- 0: 16-bit, 1: 12-bit
-capture_directory               =   "phantom_4m_128frame022326"
+capture_directory               =   "helicopter_1m_128frame022526"
 num_frames_to_capture			=	0							 -- 0: default case; Any positive value - number of frames to capture 
 framing_type                    =   1                                -- 0: infinite, 1: finite
 

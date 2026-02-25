@@ -214,8 +214,8 @@ class LiveMatlabStyleWavelet:
 
             with self._p("prep.shape_reshape"):
                 Ns, Nl, Nrx, Nc = adcData.shape
-                adcF = np.asfortranarray(adcData)
-                adc3 = adcF.reshape((Ns, Nl, Nrx * Nc), order="F")
+                #adcF = np.asfortranarray(adcData)
+                adc3 = adcData.reshape((Ns, Nl, Nrx * Nc))
 
             with self._p("prep.group_calc"):
                 totalChirps = adc3.shape[1]
