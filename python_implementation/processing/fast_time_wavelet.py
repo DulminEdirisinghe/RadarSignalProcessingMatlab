@@ -4,8 +4,10 @@ from dataclasses import dataclass, field
 from typing import Dict
 
 import numpy as np
-import matplotlib.pyplot as plt
-
+import pyqtgraph as pg
+from pyqtgraph.Qt import QtCore, QtWidgets
+import os
+os.environ["SSQ_GPU"] = "0"   # force CPU backend for ssqueezepy during testing
 from ssqueezepy import cwt, Wavelet
 from ssqueezepy.experimental import scale_to_freq
 
@@ -56,29 +58,32 @@ class TimeProfiler:
         if top_n is not None:
             items = items[:top_n]
 
-        print(f"\n{'=' * 90}")
+        print(f"\n{'=' * 95}")
         print(f"{self.name} - Timing Summary")
-        print(f"{'-' * 90}")
-        print(f"{'Section':35s} {'Calls':>8s} {'Total(s)':>12s} {'Avg(ms)':>12s} {'Min(ms)':>12s} {'Max(ms)':>12s} {'%':>8s}")
-        print(f"{'-' * 90}")
-
+        print(f"{'-' * 95}")
+        print(f"{'Section':38s} {'Calls':>8s} {'Total(s)':>12s} {'Avg(ms)':>12s} {'Min(ms)':>12s} {'Max(ms)':>12s} {'%':>8s}")
+        print(f"{'-' * 95}")
         for k, s in items:
             avg_ms = (s.total / s.count) * 1e3 if s.count else 0.0
             min_ms = s.min_t * 1e3 if s.count else 0.0
             max_ms = s.max_t * 1e3 if s.count else 0.0
             pct = (100.0 * s.total / total_all) if total_all > 0 else 0.0
-            print(f"{k:35s} {s.count:8d} {s.total:12.6f} {avg_ms:12.3f} {min_ms:12.3f} {max_ms:12.3f} {pct:8.2f}")
-
-        print(f"{'-' * 90}")
-        print(f"{'TOTAL':35s} {'':8s} {total_all:12.6f}")
-        print(f"{'=' * 90}\n")
+            print(f"{k:38s} {s.count:8d} {s.total:12.6f} {avg_ms:12.3f} {min_ms:12.3f} {max_ms:12.3f} {pct:8.2f}")
+        print(f"{'-' * 95}")
+        print(f"{'TOTAL':38s} {'':8s} {total_all:12.6f}")
+        print(f"{'=' * 95}\n")
 
 
 # ============================================================
-# Main class
+# PyQtGraph-based live wavelet viewer
 # ============================================================
 
-class LiveMatlabStyleWavelet:
+class LiveFastWaveletPG:
+    """
+    PyQtGraph replacement for the Matplotlib wavelet plot.
+    Optimized for fast image updates (heatmap style).
+    """
+
     def __init__(
         self,
         Fs=8e6,
@@ -87,13 +92,15 @@ class LiveMatlabStyleWavelet:
         fmin_hz=1e3,
         fmax_hz=5e6,
         voices_per_octave=12,
-        contour_levels=10,
-        enable_contours=True,
+        contour_levels=10,            # kept for API compatibility (unused in PG version)
+        enable_contours=False,        # contours disabled in this fast PG version
         dc_remove_mode="hp",
         hp_win=4096,
         time_range_sec=(0.0, None),
         time_stride=1,
         enable_profiling=True,
+        enable_plot=True,
+        draw_every_n=1,               # draw only every N updates
     ):
         self.Fs = float(Fs)
         self.group_size = int(group_size)
@@ -104,7 +111,7 @@ class LiveMatlabStyleWavelet:
         self.voices_per_octave = int(voices_per_octave)
 
         self.contour_levels = int(contour_levels)
-        self.enable_contours = bool(enable_contours)
+        self.enable_contours = bool(enable_contours)  # not used here intentionally
 
         self.dc_remove_mode = dc_remove_mode
         self.hp_win = int(hp_win)
@@ -112,18 +119,22 @@ class LiveMatlabStyleWavelet:
         self.time_range_sec = time_range_sec
         self.time_stride = int(time_stride)
 
-        self.fig = None
-        self.ax = None
-        self.mesh = None
-        self.cont = None
-        self.cbar = None
+        self.enable_profiling = bool(enable_profiling)
+        self.prof = TimeProfiler("WaveletProfiler-PyQtGraph")
 
-        self.sampling_period = 1.0 / self.Fs
+        self.enable_plot = bool(enable_plot)
+        self.draw_every_n = max(1, int(draw_every_n))
+        self._update_counter = 0
 
         self.ssq_wavelet = Wavelet(('GMW', {'beta': 60}))
 
-        self.enable_profiling = bool(enable_profiling)
-        self.prof = TimeProfiler("WaveletProfiler")
+        # PyQtGraph UI objects
+        self.app = None
+        self.win = None
+        self.plot = None
+        self.img = None
+        self.cbar = None
+        self._last_shape = None
 
     @contextmanager
     def _p(self, key: str):
@@ -136,33 +147,61 @@ class LiveMatlabStyleWavelet:
     def print_profile_summary(self, top_n=None):
         self.prof.print_summary(top_n=top_n)
 
-    def _ensure_fig(self):
-        with self._p("plot.ensure_fig"):
-            if self.fig is None:
-                self.fig, self.ax = plt.subplots(figsize=(10, 5))
-                self.ax.set_title("CWT Magnitude (ssqueezepy)")
-                self.ax.set_xlabel("Time (s)")
-                self.ax.set_ylabel("Frequency (Hz)")
-                self.ax.grid(True)
-                self.ax.set_axisbelow(True)
-                self.fig.show()
-                self.fig.canvas.draw()
-                self.fig.canvas.flush_events()
+    # -----------------------------
+    # UI setup
+    # -----------------------------
+    def _ensure_ui(self):
+        if not self.enable_plot:
+            return
 
-    def _remove_contours(self):
-        with self._p("plot.remove_contours"):
-            if self.cont is None:
+        with self._p("plot.ensure_ui"):
+            if self.win is not None:
                 return
-            try:
-                for coll in getattr(self.cont, "collections", []):
-                    try:
-                        coll.remove()
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-            self.cont = None
 
+            # Better than raw QApplication([])
+            self.app = pg.mkQApp("CWT Magnitude (PyQtGraph)")
+
+            pg.setConfigOptions(imageAxisOrder='row-major')
+            self.win = pg.GraphicsLayoutWidget(show=False, title="CWT Magnitude (PyQtGraph)")
+            self.win.resize(1100, 600)
+
+            self.plot = self.win.addPlot(row=0, col=0)
+            self.plot.setLabel("bottom", "Time", units="s")
+            self.plot.setLabel("left", "Frequency", units="Hz")
+            self.plot.showGrid(x=True, y=True, alpha=0.2)
+
+            self.img = pg.ImageItem(axisOrder='row-major')
+            self.plot.addItem(self.img)
+
+            import matplotlib.pyplot as plt
+            mpl_cmap = plt.get_cmap("jet", 256)
+            lut = (mpl_cmap(np.linspace(0, 1, 256)) * 255).astype(np.ubyte)  # RGBA uint8
+            cmap = pg.ColorMap(pos=np.linspace(0, 1, 256), color=lut)
+            self.img.setColorMap(cmap)
+
+            try:
+                self.cbar = pg.ColorBarItem(values=(0, 1), colorMap=cmap, label="|CWT| (dB)")
+                self.cbar.setImageItem(self.img, insert_in=self.plot)
+            except Exception:
+                try:
+                    self.cbar = pg.ColorBarItem(values=(0, 1), colorMap=cmap, label="|CWT| (dB)")
+                    self.cbar.setImageItem(self.img)
+                except Exception:
+                    self.cbar = None
+
+            # Explicit show + raise helps on Windows
+            self.win.show()
+            self.win.raise_()
+            self.win.activateWindow()
+
+            # Let Qt paint the window at least once
+            app = QtWidgets.QApplication.instance()
+            if app is not None:
+                app.processEvents()
+                app.processEvents()
+    # -----------------------------
+    # Signal prep helpers
+    # -----------------------------
     def _remove_dc(self, x: np.ndarray) -> np.ndarray:
         mode = (self.dc_remove_mode or "mean").lower()
 
@@ -208,13 +247,20 @@ class LiveMatlabStyleWavelet:
             i1 = max(i0 + 1, min(i1, x.size))
             return x[i0:i1], (i0 / self.Fs)
 
+    # -----------------------------
+    # Main update
+    # -----------------------------
     def update(self, adcData, frame_index_val, groupIdx):
         with self._p("update.total"):
-            self._ensure_fig()
+            self._ensure_ui()
 
+            self._update_counter += 1
+            should_draw = self.enable_plot and ((self._update_counter % self.draw_every_n) == 0)
+
+            # --- reshape/select ---
             with self._p("prep.shape_reshape"):
                 Ns, Nl, Nrx, Nc = adcData.shape
-                #adcF = np.asfortranarray(adcData)
+                # IMPORTANT: no np.asfortranarray(...) copy
                 adc3 = adcData.reshape((Ns, Nl, Nrx * Nc))
 
             with self._p("prep.group_calc"):
@@ -222,7 +268,6 @@ class LiveMatlabStyleWavelet:
                 numGroups = int(np.ceil(totalChirps / self.group_size))
                 if groupIdx < 1 or groupIdx > numGroups:
                     return
-
                 startChirp = (groupIdx - 1) * self.group_size
                 endChirp = min(groupIdx * self.group_size, totalChirps)
 
@@ -251,9 +296,7 @@ class LiveMatlabStyleWavelet:
             with self._p("prep.time_vector"):
                 t = (np.arange(x.size, dtype=np.float64) / Fs_eff) + t_offset
 
-            # -------------------------------------------------------
-            # CWT on I and Q separately
-            # -------------------------------------------------------
+            # --- CWT ---
             with self._p("cwt.split_IQ"):
                 I = np.real(x).astype(np.float32)
                 Q = np.imag(x).astype(np.float32)
@@ -288,8 +331,7 @@ class LiveMatlabStyleWavelet:
                 Wx_plot = Wx[sort_idx, :]
 
             with self._p("post.db_convert"):
-                #P_db = 10.0 * np.log10(Wx_plot + 1e-12)
-                P_db = Wx_plot
+                P_db = 10.0 * np.log10(Wx_plot + 1e-12)
 
             with self._p("post.percentiles"):
                 vmin = float(np.nanpercentile(P_db, 5))
@@ -302,40 +344,40 @@ class LiveMatlabStyleWavelet:
                     if vmax <= vmin:
                         vmax = vmin + 1.0
 
-            with self._p("plot.axes_limits"):
-                self.ax.set_xlim(float(t[0]), float(t[-1]))
-                self.ax.set_ylim(float(f_plot[0]), float(f_plot[-1]))
+            # --- plot (PyQtGraph ImageItem) ---
+            if should_draw:
+                with self._p("plot.imageitem_update"):
+                    # ImageItem uses array[y, x] in row-major mode => [freq, time]
+                    # Set rectangle so axes show real units (time, frequency)
+                    t0 = float(t[0])
+                    t1 = float(t[-1])
+                    f0 = float(f_plot[0])
+                    f1 = float(f_plot[-1])
 
-            with self._p("plot.mesh"):
-                if self.mesh is None:
-                    self.mesh = self.ax.pcolormesh(t, f_plot, P_db, shading="auto", cmap="jet", vmin=vmin, vmax=vmax)
-                    self.mesh.set_edgecolor("none")
-                    self.cbar = self.fig.colorbar(self.mesh, ax=self.ax)
-                    self.cbar.set_label("|CWT|")
-                else:
-                    self.mesh.remove()
-                    self.mesh = self.ax.pcolormesh(t, f_plot, P_db, shading="auto", cmap="jet", vmin=vmin, vmax=vmax)
-                    self.mesh.set_edgecolor("none")
-                    if self.cbar is not None:
-                        self.cbar.update_normal(self.mesh)
+                    if t1 <= t0:
+                        t1 = t0 + 1e-9
+                    if f1 <= f0:
+                        f1 = f0 + 1e-9
 
-                self.mesh.set_clim(vmin, vmax)
-                self.ax.set_title(f"CWT Magnitude (ssqueezepy) | Group {groupIdx} | Frame {frame_index_val}")
+                    # Update image
+                    self.img.setImage(P_db, autoLevels=False)
 
-            self._remove_contours()
+                    # Map image pixel coordinates to real axes
+                    rect = QtCore.QRectF(t0, f0, (t1 - t0), (f1 - f0))
+                    self.img.setRect(rect)
 
-            if self.enable_contours:
-                with self._p("plot.contours"):
-                    try:
-                        self.cont = self.ax.contour(
-                            t, f_plot, P_db,
-                            levels=self.contour_levels,
-                            linewidths=1.0,
-                            colors="k"
-                        )
-                    except Exception:
-                        self.cont = None
+                    # Color limits
+                    self.img.setLevels((vmin, vmax))
 
-            with self._p("plot.canvas_draw"):
-                self.fig.canvas.draw()
-                self.fig.canvas.flush_events()
+                    # Keep plot title updated
+                    self.plot.setTitle(f"CWT Magnitude | Group {groupIdx} | Frame {frame_index_val}")
+
+                    # (Optional) lock displayed ranges to exact data bounds
+                    self.plot.setXRange(t0, t1, padding=0.0)
+                    self.plot.setYRange(f0, f1, padding=0.0)
+
+                with self._p("plot.process_events"):
+                    # Fast GUI refresh without matplotlib pause()
+                    app = QtWidgets.QApplication.instance()
+                    if app is not None:
+                        app.processEvents()

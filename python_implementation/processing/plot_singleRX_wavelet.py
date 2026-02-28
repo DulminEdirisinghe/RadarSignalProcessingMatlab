@@ -1,4 +1,6 @@
 import os
+os.environ["SSQ_GPU"] = "1"
+import torch
 import re
 import time
 from contextlib import contextmanager
@@ -6,17 +8,16 @@ from dataclasses import dataclass, field
 from typing import Dict
 
 import numpy as np
-import matplotlib
-matplotlib.use("TkAgg")
-import matplotlib.pyplot as plt
+import pyqtgraph as pg
+from pyqtgraph.Qt import QtWidgets
 
 from fmcw_parameters import *
-from fast_time_wavelet import LiveMatlabStyleWavelet
+from fast_time_wavelet import LiveFastWaveletPG
 from helpers import *
 
 
 # ============================================================
-#Profiling 
+# Simple profiling utility
 # ============================================================
 
 @dataclass
@@ -66,20 +67,18 @@ class TimeProfiler:
         print(f"{'-' * 100}")
         print(f"{'Section':40s} {'Calls':>8s} {'Total(s)':>12s} {'Avg(ms)':>12s} {'Min(ms)':>12s} {'Max(ms)':>12s} {'%':>8s}")
         print(f"{'-' * 100}")
-
         for k, s in items:
             avg_ms = (s.total / s.count) * 1e3 if s.count else 0.0
             min_ms = s.min_t * 1e3 if s.count else 0.0
             max_ms = s.max_t * 1e3 if s.count else 0.0
             pct = (100.0 * s.total / total_all) if total_all > 0 else 0.0
             print(f"{k:40s} {s.count:8d} {s.total:12.6f} {avg_ms:12.3f} {min_ms:12.3f} {max_ms:12.3f} {pct:8.2f}")
-
         print(f"{'-' * 100}")
         print(f"{'TOTAL':40s} {'':8s} {total_all:12.6f}")
         print(f"{'=' * 100}\n")
 
 
-def print_combined_summary(main_prof: TimeProfiler, wavelet_obj: LiveMatlabStyleWavelet):
+def print_combined_summary(main_prof: TimeProfiler, wavelet_obj: LiveFastWaveletPG):
     print("\n\n########## DESCRIPTIVE PROFILING SUMMARY ##########")
     main_prof.print_summary()
     wavelet_obj.print_profile_summary()
@@ -89,7 +88,7 @@ if __name__ == "__main__":
     # -------------------------
     # User settings
     # -------------------------
-    DATA_FOLDER = r"D:\radardata_fmcw\phantom_2m_128frame022326"
+    DATA_FOLDER = r"C:\ti\mmwave_studio_02_01_01_00\mmWaveStudio\PostProc\smart_1m_128frame022526"
     GROUP_SIZE = 128
     Ns = ADC_SAMPLES
     Nc = NC_CHIRPS_PER_LOOP
@@ -97,14 +96,20 @@ if __name__ == "__main__":
     FAST_CWT_TIME_RANGE_SEC = (0.0, 0.0002)
 
     # Profile only a few frames, then exit
-    MAX_PROFILE_FRAMES = 128  
+    MAX_PROFILE_FRAMES = 127
 
-    prof = TimeProfiler("MainLoopProfiler")
+    # Draw every N frames (massive speedup for UI-heavy workload)
+    DRAW_EVERY_N = 1   # set to 2 or 5 for much faster overall performance
+
+    prof = TimeProfiler("MainLoopProfiler-PyQtGraph")
 
     idx_pat = re.compile(r"master_(\d{4})_idx\.bin$")
     processed = set()
 
-    live_fast_cwt = LiveMatlabStyleWavelet(
+    # Ensure a Qt app exists (PyQtGraph UI)
+    app = pg.mkQApp("Wavelet Viewer")
+
+    live_fast_cwt = LiveFastWaveletPG(
         Fs=FS_FAST,
         antenna_index_1based=1,
         fmin_hz=1e3,
@@ -117,6 +122,8 @@ if __name__ == "__main__":
         time_range_sec=FAST_CWT_TIME_RANGE_SEC,
         time_stride=1,
         enable_profiling=True,
+        enable_plot=True,
+        draw_every_n=DRAW_EVERY_N,
     )
 
     total_frames_processed = 0
@@ -164,12 +171,12 @@ if __name__ == "__main__":
                             with prof.section("frame.wavelet_update"):
                                 live_fast_cwt.update(cube, frame_index_val=frame, groupIdx=group_to_show)
 
-                            with prof.section("frame.plt_pause"):
-                                plt.pause(0.001)
+                            # Optional: process Qt events in main loop too (usually cheap)
+                            with prof.section("frame.qt_process_events"):
+                                app.processEvents()
 
                         total_frames_processed += 1
 
-                        # Stop after N frames
                         if total_frames_processed >= MAX_PROFILE_FRAMES:
                             done = True
                             break
@@ -182,21 +189,25 @@ if __name__ == "__main__":
                     if done:
                         break
 
-                # If all current files processed but frame limit not reached, stop anyway
-                # (prevents endless waiting during profiling)
                 if not done:
                     print("Finished available captures before reaching frame limit.")
                     break
 
             except Exception as e:
                 print("Error:", e)
-                break  # stop on error for profiling runs
+                break
 
             with prof.section("loop.sleep"):
-                time.sleep(0.05)
+                time.sleep(0.01)
 
     except KeyboardInterrupt:
         print("\nStopped by user (Ctrl+C).")
 
     finally:
         print_combined_summary(prof, live_fast_cwt)
+        # Keep window open after profiling so you can actually see it
+        if live_fast_cwt.enable_plot and live_fast_cwt.win is not None:
+            print("Close the plot window to exit...")
+            app = QtWidgets.QApplication.instance()
+            if app is not None:
+                app.exec()

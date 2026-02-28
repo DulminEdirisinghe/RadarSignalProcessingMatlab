@@ -85,7 +85,7 @@ function plotWaveletForChirps(adcData, outputDir, frame_index_val)
         endChirp = min(groupIdx * chirpsPerGroup, totalChirps);
 
         % Select data for the current chirp group
-        selectedData = adcData(:, startChirp:endChirp, 1); % Assuming antenna index 1
+        selectedData = adcData(:, startChirp:endChirp, 2); % Assuming antenna index 1
 
         % Flatten the data and convert to complex double
         flattenedData = complex(double(real(selectedData(:))), double(imag(selectedData(:))));
@@ -101,13 +101,16 @@ function plotWaveletForChirps(adcData, outputDir, frame_index_val)
         cfs_magnitude = abs(cfs_real + 1i * cfs_imag);
 
         % Third plot: Magnitude of wavelet coefficients
-       figure;
-        powerMap = abs(cfs_magnitude).^2;
+        figure;
+        
+        p= abs(cfs_magnitude).^2;
+        %powerMap  = 10*log(p+eps);
+        powerMap = p;
 
         h_mag = pcolor(t, f_real, powerMap);
         set(h_mag, 'EdgeColor', 'none');
         colormap jet;
-        %colorbar;
+        colorbar;
         % ---- Robust color scaling (ignore extreme outliers) ----
         cmin = prctile(powerMap(:), 5);    % lower 5%
         cmax = prctile(powerMap(:), 99);   % upper 99%
@@ -120,7 +123,7 @@ function plotWaveletForChirps(adcData, outputDir, frame_index_val)
        
         % ---- Tick marks (measures) ----
         xticks(linspace(0, 2e-4, 5));          % 0, 0.5e-4, 1e-4, 1.5e-4, 2e-4
-        yticks(0:1e6:5e6);                     % 0 to 5 MHz in 1 MHz steps
+        yticks(0:0.1e6:3e6);                     % 0 to 5 MHz in 1 MHz steps
         
         % Make ticks readable (show MHz on y, microseconds on x)
         ax = gca;
@@ -130,7 +133,7 @@ function plotWaveletForChirps(adcData, outputDir, frame_index_val)
         box on;
         grid on;
         % Set limits
-        ylim([0 5e6]);
+        ylim([0 3e6]);
         xlim([0 2e-4]);
 
         % Overlay contour lines
@@ -304,7 +307,7 @@ while ~feof(fidList)
 %            while(true)
 %                pause(1);
 %            end
-            plotWaveletForRangeBins(rangeFFTOut);
+            %plotWaveletForRangeBins(rangeFFTOut);
             % CFAR done along only TX and RX used in MIMO array
             DopplerFFTOut = reshape(DopplerFFTOut,size(DopplerFFTOut,1), size(DopplerFFTOut,2), size(DopplerFFTOut,3)*size(DopplerFFTOut,4));
             
