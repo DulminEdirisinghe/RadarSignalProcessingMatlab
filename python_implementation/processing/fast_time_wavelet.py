@@ -1,3 +1,4 @@
+import torch
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -7,7 +8,7 @@ import numpy as np
 import pyqtgraph as pg
 from pyqtgraph.Qt import QtCore, QtWidgets
 import os
-os.environ["SSQ_GPU"] = "0"   # force CPU backend for ssqueezepy during testing
+os.environ["SSQ_GPU"] = "0"   # force CPU backend for ssqueezepy (CWT runs on CPU)
 from ssqueezepy import cwt, Wavelet
 from ssqueezepy.experimental import scale_to_freq
 
@@ -82,6 +83,12 @@ class LiveFastWaveletPG:
     """
     PyQtGraph replacement for the Matplotlib wavelet plot.
     Optimized for fast image updates (heatmap style).
+
+    KEY FIX: CWT scales are logarithmically spaced, so raw f_plot is non-uniform.
+    ImageItem.setRect() maps pixels *linearly* to the rect, so if you pass the
+    raw non-uniform data the frequency axis is wrong (same bug as pcolormesh vs imshow).
+    Solution: resample P_db onto a uniform linear frequency grid before display.
+    This makes every pixel row exactly one equal Hz step, so setRect is correct.
     """
 
     def __init__(
@@ -92,6 +99,7 @@ class LiveFastWaveletPG:
         fmin_hz=1e3,
         fmax_hz=5e6,
         voices_per_octave=12,
+        n_freq_bins=512,              # number of uniform freq bins for display
         contour_levels=10,            # kept for API compatibility (unused in PG version)
         enable_contours=False,        # contours disabled in this fast PG version
         dc_remove_mode="hp",
@@ -109,9 +117,10 @@ class LiveFastWaveletPG:
         self.fmin_hz = float(fmin_hz)
         self.fmax_hz = float(fmax_hz)
         self.voices_per_octave = int(voices_per_octave)
+        self.n_freq_bins = int(n_freq_bins)
 
         self.contour_levels = int(contour_levels)
-        self.enable_contours = bool(enable_contours)  # not used here intentionally
+        self.enable_contours = bool(enable_contours)
 
         self.dc_remove_mode = dc_remove_mode
         self.hp_win = int(hp_win)
@@ -158,7 +167,6 @@ class LiveFastWaveletPG:
             if self.win is not None:
                 return
 
-            # Better than raw QApplication([])
             self.app = pg.mkQApp("CWT Magnitude (PyQtGraph)")
 
             pg.setConfigOptions(imageAxisOrder='row-major')
@@ -173,6 +181,7 @@ class LiveFastWaveletPG:
             self.img = pg.ImageItem(axisOrder='row-major')
             self.plot.addItem(self.img)
 
+            # Jet colormap via matplotlib LUT
             import matplotlib.pyplot as plt
             mpl_cmap = plt.get_cmap("jet", 256)
             lut = (mpl_cmap(np.linspace(0, 1, 256)) * 255).astype(np.ubyte)  # RGBA uint8
@@ -189,16 +198,15 @@ class LiveFastWaveletPG:
                 except Exception:
                     self.cbar = None
 
-            # Explicit show + raise helps on Windows
             self.win.show()
             self.win.raise_()
             self.win.activateWindow()
 
-            # Let Qt paint the window at least once
             app = QtWidgets.QApplication.instance()
             if app is not None:
                 app.processEvents()
                 app.processEvents()
+
     # -----------------------------
     # Signal prep helpers
     # -----------------------------
@@ -247,6 +255,40 @@ class LiveFastWaveletPG:
             i1 = max(i0 + 1, min(i1, x.size))
             return x[i0:i1], (i0 / self.Fs)
 
+    def _resample_to_uniform_freq(
+        self, P_db: np.ndarray, f_plot: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Resample P_db (non-uniform freq axis) onto a uniform linear freq grid.
+
+        This is the core fix:
+          - f_plot comes from scale_to_freq → logarithmically spaced
+          - ImageItem.setRect maps pixels linearly → wrong axis without resampling
+          - After resampling to f_uniform (linear), each pixel row = equal Hz step
+            so setRect(t0, f0, dt, df) is exact.
+
+        Uses nearest-neighbour lookup (argmin per target bin) — very fast for
+        typical sizes (<1024 freq bins × <2000 time samples).
+        """
+        with self._p("post.freq_resample"):
+            n_out = self.n_freq_bins
+            f_uniform = np.linspace(f_plot[0], f_plot[-1], n_out)
+
+            # For each uniform target freq, find the closest non-uniform source row
+            # np.searchsorted is O(n_out * log(n_in)) — fast
+            indices = np.searchsorted(f_plot, f_uniform)
+            indices = np.clip(indices, 0, len(f_plot) - 1)
+
+            # Snap to nearest (not just lower) by checking both neighbours
+            indices_prev = np.clip(indices - 1, 0, len(f_plot) - 1)
+            dist_next = np.abs(f_plot[indices] - f_uniform)
+            dist_prev = np.abs(f_plot[indices_prev] - f_uniform)
+            nearest = np.where(dist_prev < dist_next, indices_prev, indices)
+
+            P_resampled = P_db[nearest, :]  # shape: (n_out, n_time)
+
+        return P_resampled, f_uniform
+
     # -----------------------------
     # Main update
     # -----------------------------
@@ -260,7 +302,6 @@ class LiveFastWaveletPG:
             # --- reshape/select ---
             with self._p("prep.shape_reshape"):
                 Ns, Nl, Nrx, Nc = adcData.shape
-                # IMPORTANT: no np.asfortranarray(...) copy
                 adc3 = adcData.reshape((Ns, Nl, Nrx * Nc))
 
             with self._p("prep.group_calc"):
@@ -331,14 +372,23 @@ class LiveFastWaveletPG:
                 Wx_plot = Wx[sort_idx, :]
 
             with self._p("post.db_convert"):
-                P_db = 10.0 * np.log10(Wx_plot + 1e-12)
+                #P_db = 10.0 * np.log10(Wx_plot + 1e-12)
+                P_db =Wx_plot
+
+            # -------------------------------------------------------
+            # KEY FIX: resample onto a uniform linear frequency grid
+            # so that ImageItem.setRect() maps pixels correctly to Hz.
+            # Without this, CWT's log-spaced rows appear linearly
+            # stretched — low freqs look compressed, high freqs expanded.
+            # -------------------------------------------------------
+            P_db_uniform, f_uniform = self._resample_to_uniform_freq(P_db, f_plot)
 
             with self._p("post.percentiles"):
-                vmin = float(np.nanpercentile(P_db, 5))
-                vmax = float(np.nanpercentile(P_db, 99.5))
+                vmin = float(np.nanpercentile(P_db_uniform, 5))
+                vmax = float(np.nanpercentile(P_db_uniform, 99.5))
                 if not np.isfinite(vmin) or not np.isfinite(vmax) or vmax <= vmin:
-                    vmin = float(np.nanmin(P_db))
-                    vmax = float(np.nanmax(P_db))
+                    vmin = float(np.nanmin(P_db_uniform))
+                    vmax = float(np.nanmax(P_db_uniform))
                     if not np.isfinite(vmin) or not np.isfinite(vmax):
                         return
                     if vmax <= vmin:
@@ -347,37 +397,38 @@ class LiveFastWaveletPG:
             # --- plot (PyQtGraph ImageItem) ---
             if should_draw:
                 with self._p("plot.imageitem_update"):
-                    # ImageItem uses array[y, x] in row-major mode => [freq, time]
-                    # Set rectangle so axes show real units (time, frequency)
-                    t0 = float(t[0])
-                    t1 = float(t[-1])
-                    f0 = float(f_plot[0])
-                    f1 = float(f_plot[-1])
+                    t0_val = float(t[0])
+                    t1_val = float(t[-1])
+                    f0_val = float(f_uniform[0])
+                    f1_val = float(f_uniform[-1])
 
-                    if t1 <= t0:
-                        t1 = t0 + 1e-9
-                    if f1 <= f0:
-                        f1 = f0 + 1e-9
+                    if t1_val <= t0_val:
+                        t1_val = t0_val + 1e-9
+                    if f1_val <= f0_val:
+                        f1_val = f0_val + 1e-9
 
-                    # Update image
-                    self.img.setImage(P_db, autoLevels=False)
+                    # P_db_uniform is [n_freq_bins, n_time] in row-major:
+                    # row 0 = lowest freq, last row = highest freq → correct orientation
+                    self.img.setImage(P_db_uniform, autoLevels=False)
 
-                    # Map image pixel coordinates to real axes
-                    rect = QtCore.QRectF(t0, f0, (t1 - t0), (f1 - f0))
+                    # Now pixels are uniformly spaced in both time and freq,
+                    # so this linear rect mapping is exact.
+                    rect = QtCore.QRectF(
+                        t0_val,
+                        f0_val,
+                        (t1_val - t0_val),
+                        (f1_val - f0_val),
+                    )
                     self.img.setRect(rect)
-
-                    # Color limits
                     self.img.setLevels((vmin, vmax))
 
-                    # Keep plot title updated
-                    self.plot.setTitle(f"CWT Magnitude | Group {groupIdx} | Frame {frame_index_val}")
-
-                    # (Optional) lock displayed ranges to exact data bounds
-                    self.plot.setXRange(t0, t1, padding=0.0)
-                    self.plot.setYRange(f0, f1, padding=0.0)
+                    self.plot.setTitle(
+                        f"CWT Magnitude | Group {groupIdx} | Frame {frame_index_val}"
+                    )
+                    self.plot.setXRange(t0_val, t1_val, padding=0.0)
+                    self.plot.setYRange(f0_val, f1_val, padding=0.0)
 
                 with self._p("plot.process_events"):
-                    # Fast GUI refresh without matplotlib pause()
                     app = QtWidgets.QApplication.instance()
                     if app is not None:
                         app.processEvents()

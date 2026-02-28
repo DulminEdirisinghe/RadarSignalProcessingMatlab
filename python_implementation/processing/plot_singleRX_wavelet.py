@@ -1,6 +1,6 @@
-import os
-os.environ["SSQ_GPU"] = "1"
 import torch
+import os
+os.environ["SSQ_GPU"] = "0"   # CWT on CPU; GPU used only by Qt for rendering
 import re
 import time
 from contextlib import contextmanager
@@ -88,7 +88,7 @@ if __name__ == "__main__":
     # -------------------------
     # User settings
     # -------------------------
-    DATA_FOLDER = r"C:\ti\mmwave_studio_02_01_01_00\mmWaveStudio\PostProc\smart_1m_128frame022526"
+    DATA_FOLDER = r"D:\radardata_fmcw\phantom_2m_128frame022326"
     GROUP_SIZE = 128
     Ns = ADC_SAMPLES
     Nc = NC_CHIRPS_PER_LOOP
@@ -98,8 +98,13 @@ if __name__ == "__main__":
     # Profile only a few frames, then exit
     MAX_PROFILE_FRAMES = 127
 
-    # Draw every N frames (massive speedup for UI-heavy workload)
-    DRAW_EVERY_N = 1   # set to 2 or 5 for much faster overall performance
+    # Draw every N frames (set to 2 or 5 for faster overall performance)
+    DRAW_EVERY_N = 1
+
+    # Number of uniform frequency bins for display.
+    # Higher = more freq resolution in the plot (but slightly more RAM / resample time).
+    # 512 is a good default; 256 is faster; 1024 gives finer detail.
+    N_FREQ_BINS = 512
 
     prof = TimeProfiler("MainLoopProfiler-PyQtGraph")
 
@@ -115,6 +120,7 @@ if __name__ == "__main__":
         fmin_hz=1e3,
         fmax_hz=4e6,
         voices_per_octave=2048,
+        n_freq_bins=N_FREQ_BINS,      # uniform freq grid size for correct axis display
         contour_levels=10,
         enable_contours=False,
         dc_remove_mode="mean",
@@ -171,7 +177,6 @@ if __name__ == "__main__":
                             with prof.section("frame.wavelet_update"):
                                 live_fast_cwt.update(cube, frame_index_val=frame, groupIdx=group_to_show)
 
-                            # Optional: process Qt events in main loop too (usually cheap)
                             with prof.section("frame.qt_process_events"):
                                 app.processEvents()
 
@@ -205,7 +210,6 @@ if __name__ == "__main__":
 
     finally:
         print_combined_summary(prof, live_fast_cwt)
-        # Keep window open after profiling so you can actually see it
         if live_fast_cwt.enable_plot and live_fast_cwt.win is not None:
             print("Close the plot window to exit...")
             app = QtWidgets.QApplication.instance()
