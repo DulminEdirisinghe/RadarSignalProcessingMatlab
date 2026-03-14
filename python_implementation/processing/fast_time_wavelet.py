@@ -8,9 +8,12 @@ import numpy as np
 import pyqtgraph as pg
 from pyqtgraph.Qt import QtCore, QtWidgets
 import os
-os.environ["SSQ_GPU"] = "0"   # force CPU backend for ssqueezepy (CWT runs on CPU)
+os.environ["SSQ_GPU"] = "0"   
 from ssqueezepy import cwt, Wavelet
 from ssqueezepy.experimental import scale_to_freq
+from PIL import Image
+import matplotlib.cm as cm
+import matplotlib.pyplot as plt
 
 
 # ============================================================
@@ -83,12 +86,6 @@ class LiveFastWaveletPG:
     """
     PyQtGraph replacement for the Matplotlib wavelet plot.
     Optimized for fast image updates (heatmap style).
-
-    KEY FIX: CWT scales are logarithmically spaced, so raw f_plot is non-uniform.
-    ImageItem.setRect() maps pixels *linearly* to the rect, so if you pass the
-    raw non-uniform data the frequency axis is wrong (same bug as pcolormesh vs imshow).
-    Solution: resample P_db onto a uniform linear frequency grid before display.
-    This makes every pixel row exactly one equal Hz step, so setRect is correct.
     """
 
     def __init__(
@@ -99,9 +96,9 @@ class LiveFastWaveletPG:
         fmin_hz=1e3,
         fmax_hz=5e6,
         voices_per_octave=12,
-        n_freq_bins=512,              # number of uniform freq bins for display
-        contour_levels=10,            # kept for API compatibility (unused in PG version)
-        enable_contours=False,        # contours disabled in this fast PG version
+        n_freq_bins=512,              
+        contour_levels=10,            
+        enable_contours=False,        
         dc_remove_mode="hp",
         hp_win=4096,
         time_range_sec=(0.0, None),
@@ -109,6 +106,8 @@ class LiveFastWaveletPG:
         enable_profiling=True,
         enable_plot=True,
         draw_every_n=1,               # draw only every N updates
+        save_images_dir=None,         # directory to save heatmap images (None = disabled)
+        output_size=(256, 256),       # standardized output image size (height, width)
     ):
         self.Fs = float(Fs)
         self.group_size = int(group_size)
@@ -136,6 +135,12 @@ class LiveFastWaveletPG:
         self._update_counter = 0
 
         self.ssq_wavelet = Wavelet(('GMW', {'beta': 60}))
+
+        # Image saving configuration
+        self.save_images_dir = save_images_dir
+        self.output_size = tuple(output_size) if output_size else (256, 256)
+        if self.save_images_dir and not os.path.exists(self.save_images_dir):
+            os.makedirs(self.save_images_dir, exist_ok=True)
 
         # PyQtGraph UI objects
         self.app = None
@@ -261,7 +266,7 @@ class LiveFastWaveletPG:
         """
         Resample P_db (non-uniform freq axis) onto a uniform linear freq grid.
 
-        This is the core fix:
+        core fix:
           - f_plot comes from scale_to_freq → logarithmically spaced
           - ImageItem.setRect maps pixels linearly → wrong axis without resampling
           - After resampling to f_uniform (linear), each pixel row = equal Hz step
@@ -275,7 +280,6 @@ class LiveFastWaveletPG:
             f_uniform = np.linspace(f_plot[0], f_plot[-1], n_out)
 
             # For each uniform target freq, find the closest non-uniform source row
-            # np.searchsorted is O(n_out * log(n_in)) — fast
             indices = np.searchsorted(f_plot, f_uniform)
             indices = np.clip(indices, 0, len(f_plot) - 1)
 
@@ -288,6 +292,83 @@ class LiveFastWaveletPG:
             P_resampled = P_db[nearest, :]  # shape: (n_out, n_time)
 
         return P_resampled, f_uniform
+
+    def _heatmap_to_rgb(self, heatmap_data: np.ndarray, vmin: float, vmax: float) -> np.ndarray:
+        """
+        Convert heatmap data to RGB using 'jet' colormap.
+        
+        Args:
+            heatmap_data: 2D array (height, width)
+            vmin: minimum value for normalization
+            vmax: maximum value for normalization
+            
+        Returns:
+            RGB image array (height, width, 3) with uint8 values
+        """
+        with self._p("save.heatmap_to_rgb"):
+            # Normalize to [0, 1]
+            if vmax <= vmin:
+                normalized = np.zeros_like(heatmap_data, dtype=np.float32)
+            else:
+                normalized = np.clip((heatmap_data - vmin) / (vmax - vmin), 0, 1).astype(np.float32)
+            
+            # Apply jet colormap
+            cmap = cm.get_cmap('jet')
+            rgba = cmap(normalized)  # shape: (H, W, 4)
+            rgb = (rgba[:, :, :3] * 255).astype(np.uint8)  # Convert to uint8, drop alpha
+            
+        return rgb
+
+    def _save_heatmap_image(self, 
+                           heatmap_data: np.ndarray, 
+                           vmin: float, 
+                           vmax: float,
+                           frame_index: int, 
+                           group_index: int) -> str:
+        """
+        Save heatmap as a standardized-size image.
+        
+        Args:
+            heatmap_data: 2D normalized heatmap array
+            vmin: minimum value for colormap normalization
+            vmax: maximum value for colormap normalization
+            frame_index: frame number for filename
+            group_index: group number for filename
+            
+        Returns:
+            Path to saved image, or empty string if save disabled
+        """
+        if not self.save_images_dir:
+            return ""
+            
+        try:
+            with self._p("save.total"):
+                # Convert to RGB
+                rgb_image = self._heatmap_to_rgb(heatmap_data, vmin, vmax)
+                
+                # Convert to PIL Image
+                with self._p("save.pil_convert"):
+                    img = Image.fromarray(rgb_image, mode='RGB')
+                
+                # Resize to standardized output size
+                with self._p("save.resize"):
+                    h, w = self.output_size
+                    img_resized = img.resize((w, h), Image.Resampling.LANCZOS)
+                
+                # Generate filename
+                with self._p("save.filename"):
+                    filename = f"frame_{frame_index:06d}_group_{group_index:03d}.png"
+                    filepath = os.path.join(self.save_images_dir, filename)
+                
+                # Save image
+                with self._p("save.disk_write"):
+                    img_resized.save(filepath, quality=95)
+                    
+        except Exception as e:
+            print(f"[ERROR] Failed to save image: {e}")
+            return ""
+            
+        return filepath
 
     # -----------------------------
     # Main update
@@ -432,3 +513,7 @@ class LiveFastWaveletPG:
                     app = QtWidgets.QApplication.instance()
                     if app is not None:
                         app.processEvents()
+
+            # --- save image ---
+            if self.save_images_dir:
+                self._save_heatmap_image(P_db_uniform, vmin, vmax, frame_index_val, groupIdx)

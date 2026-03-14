@@ -104,8 +104,8 @@ function plotWaveletForChirps(adcData, outputDir, frame_index_val)
         figure;
         
         p= abs(cfs_magnitude).^2;
-        %powerMap  = 10*log(p+eps);
-        powerMap = p;
+        powerMap  = 10*log(p+eps);
+        %powerMap = p;
 
         h_mag = pcolor(t, f_real, powerMap);
         set(h_mag, 'EdgeColor', 'none');

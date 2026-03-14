@@ -1,6 +1,6 @@
 import torch
 import os
-os.environ["SSQ_GPU"] = "0"   # CWT on CPU; GPU used only by Qt for rendering
+os.environ["SSQ_GPU"] = "0"  
 import re
 import time
 from contextlib import contextmanager
@@ -17,7 +17,7 @@ from helpers import *
 
 
 # ============================================================
-# Simple profiling utility
+# Profiling utility
 # ============================================================
 
 @dataclass
@@ -88,30 +88,37 @@ if __name__ == "__main__":
     # -------------------------
     # User settings
     # -------------------------
-    DATA_FOLDER = r"D:\radardata_fmcw\phantom_2m_128frame022326"
+    DATA_FOLDER = r"C:\radar_receiver\radar_new"
     GROUP_SIZE = 128
     Ns = ADC_SAMPLES
     Nc = NC_CHIRPS_PER_LOOP
     Nl = NCHIRP_LOOPS
     FAST_CWT_TIME_RANGE_SEC = (0.0, 0.0002)
 
-    # Profile only a few frames, then exit
-    MAX_PROFILE_FRAMES = 127
+    # Set to None to run forever, or an int to stop after N total frames
+    MAX_PROFILE_FRAMES = None
 
-    # Draw every N frames (set to 2 or 5 for faster overall performance)
+    # Set to True to print profiling summary on exit
+    ENABLE_PROFILING = False
+
     DRAW_EVERY_N = 1
-
-    # Number of uniform frequency bins for display.
-    # Higher = more freq resolution in the plot (but slightly more RAM / resample time).
-    # 512 is a good default; 256 is faster; 1024 gives finer detail.
     N_FREQ_BINS = 512
+    
+    # ML Dataset configuration
+    SAVE_IMAGES = True  # Set to False to disable image saving
+    IMAGES_OUTPUT_DIR = r"C:\radar_receiver\ml_dataset"  # Directory to save standardized images
+    IMAGE_OUTPUT_SIZE = (256, 256)  # Standardized output image size (height, width)
+
+    # Polling interval (seconds) when waiting for new files or new frames
+    POLL_INTERVAL_SEC = 1.0
 
     prof = TimeProfiler("MainLoopProfiler-PyQtGraph")
 
     idx_pat = re.compile(r"master_(\d{4})_idx\.bin$")
-    processed = set()
 
-    # Ensure a Qt app exists (PyQtGraph UI)
+    # frames_done[idx_str] = number of frames already processed for that capture
+    frames_done: Dict[str, int] = {}
+
     app = pg.mkQApp("Wavelet Viewer")
 
     live_fast_cwt = LiveFastWaveletPG(
@@ -120,96 +127,105 @@ if __name__ == "__main__":
         fmin_hz=1e3,
         fmax_hz=4e6,
         voices_per_octave=2048,
-        n_freq_bins=N_FREQ_BINS,      # uniform freq grid size for correct axis display
+        n_freq_bins=N_FREQ_BINS,
         contour_levels=10,
         enable_contours=False,
         dc_remove_mode="mean",
         hp_win=1024,
         time_range_sec=FAST_CWT_TIME_RANGE_SEC,
         time_stride=1,
-        enable_profiling=True,
+        enable_profiling=ENABLE_PROFILING,
         enable_plot=True,
         draw_every_n=DRAW_EVERY_N,
+        save_images_dir=IMAGES_OUTPUT_DIR if SAVE_IMAGES else None,
+        output_size=IMAGE_OUTPUT_SIZE,
     )
 
     total_frames_processed = 0
-    done = False
+
+    print(f"Watching {DATA_FOLDER} for captures... (Ctrl+C to stop)")
 
     try:
-        while not done:
+        while True:
+
+            # ── 1. Scan folder for all idx files ──────────────────────
             try:
-                with prof.section("loop.scan_folder"):
-                    idx_files = []
-                    for entry in os.scandir(DATA_FOLDER):
-                        if entry.is_file():
-                            m = idx_pat.match(entry.name)
-                            if m:
-                                idx_files.append((m.group(1), entry.name))
+                idx_files = []
+                for entry in os.scandir(DATA_FOLDER):
+                    if entry.is_file():
+                        m = idx_pat.match(entry.name)
+                        if m:
+                            idx_files.append((m.group(1), entry.name))
+                idx_files.sort(key=lambda x: x[0])
+            except Exception as e:
+                print(f"[scan error] {e}")
+                time.sleep(POLL_INTERVAL_SEC)
+                app.processEvents()
+                continue
 
-                with prof.section("loop.sort_idx_files"):
-                    idx_files.sort(key=lambda x: x[0])
+            if not idx_files:
+                # No captures yet — keep polling silently
+                time.sleep(POLL_INTERVAL_SEC)
+                app.processEvents()
+                continue
 
-                if not idx_files:
-                    print("No capture files found.")
-                    break
+            # ── 2. For each capture, process any frames not yet seen ──
+            made_progress = False
 
-                for idx, idxf in idx_files:
-                    if idx in processed:
+            for idx, idxf in idx_files:
+                idx_path = os.path.join(DATA_FOLDER, idxf)
+
+                try:
+                    nframes = get_valid_num_frames(idx_path)
+                except Exception as e:
+                    print(f"[read error {idxf}] {e}")
+                    continue
+
+                already_done = frames_done.get(idx, 0)
+
+                if nframes <= already_done:
+                    # No new frames for this capture yet
+                    continue
+
+                print(f"\n Capture {idx} | frames available = {nframes} | resuming from frame {already_done + 1}")
+
+                for frame in range(already_done + 1, nframes + 1):
+                    try:
+                        cube = read_master_bin(DATA_FOLDER, idx, frame, Ns, Nc, Nl)
+
+                        numGroups = int(np.ceil(Nl / GROUP_SIZE))
+                        group_to_show = max(1, min(1, numGroups))
+
+                        print(f"  [{idx} | Frame {frame}/{nframes}] shape {cube.shape}")
+
+                        live_fast_cwt.update(cube, frame_index_val=frame, groupIdx=group_to_show)
+                        app.processEvents()
+
+                        frames_done[idx] = frame
+                        total_frames_processed += 1
+                        made_progress = True
+
+                    except Exception as e:
+                        print(f"  [frame error idx={idx} frame={frame}] {e}")
                         continue
 
-                    with prof.section("file.get_valid_num_frames"):
-                        nframes = get_valid_num_frames(os.path.join(DATA_FOLDER, idxf))
+                    if MAX_PROFILE_FRAMES is not None and total_frames_processed >= MAX_PROFILE_FRAMES:
+                        print(f"\n Reached MAX_PROFILE_FRAMES={MAX_PROFILE_FRAMES}, stopping.")
+                        raise KeyboardInterrupt
 
-                    print(f"\n📥 Capture {idx} | Frames = {nframes}")
+                print(f"Capture {idx}: processed up to frame {frames_done[idx]}/{nframes}")
 
-                    for frame in range(1, nframes + 1):
-                        with prof.section("frame.total"):
-                            with prof.section("frame.read_master_bin"):
-                                cube = read_master_bin(DATA_FOLDER, idx, frame, Ns, Nc, Nl)
-
-                            with prof.section("frame.group_calc"):
-                                numGroups = int(np.ceil(Nl / GROUP_SIZE))
-                                group_to_show = max(1, min(1, numGroups))
-
-                            print(f"[{idx} | Frame {frame}] plots... (Group {group_to_show}/{numGroups})")
-                            print(cube.shape)
-
-                            with prof.section("frame.wavelet_update"):
-                                live_fast_cwt.update(cube, frame_index_val=frame, groupIdx=group_to_show)
-
-                            with prof.section("frame.qt_process_events"):
-                                app.processEvents()
-
-                        total_frames_processed += 1
-
-                        if total_frames_processed >= MAX_PROFILE_FRAMES:
-                            done = True
-                            break
-
-                    with prof.section("loop.mark_processed"):
-                        processed.add(idx)
-
-                    print(f" Capture {idx} done")
-
-                    if done:
-                        break
-
-                if not done:
-                    print("Finished available captures before reaching frame limit.")
-                    break
-
-            except Exception as e:
-                print("Error:", e)
-                break
-
-            with prof.section("loop.sleep"):
-                time.sleep(0.01)
+            # ── 3. Nothing new this scan → sleep and poll again ────────
+            if not made_progress:
+                time.sleep(POLL_INTERVAL_SEC)
+                app.processEvents()
 
     except KeyboardInterrupt:
-        print("\nStopped by user (Ctrl+C).")
+        print("\n Stopped by user (Ctrl+C).")
 
     finally:
-        print_combined_summary(prof, live_fast_cwt)
+        if ENABLE_PROFILING:
+            print_combined_summary(prof, live_fast_cwt)
         if live_fast_cwt.enable_plot and live_fast_cwt.win is not None:
             print("Close the plot window to exit...")
             app = QtWidgets.QApplication.instance()
