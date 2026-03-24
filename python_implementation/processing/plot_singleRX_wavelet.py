@@ -88,7 +88,7 @@ if __name__ == "__main__":
     # -------------------------
     # User settings
     # -------------------------
-    DATA_FOLDER = r"C:\radar_receiver\radar_new"
+    DATA_FOLDER = r"C:\ti\mmwave_studio_02_01_01_00\mmWaveStudio\PostProc\phantom_2m_128_03242024_3"
     GROUP_SIZE = 128
     Ns = ADC_SAMPLES
     Nc = NC_CHIRPS_PER_LOOP
@@ -106,7 +106,7 @@ if __name__ == "__main__":
     
     # ML Dataset configuration
     SAVE_IMAGES = True  # Set to False to disable image saving
-    IMAGES_OUTPUT_DIR = r"C:\radar_receiver\ml_dataset"  # Directory to save standardized images
+    IMAGES_OUTPUT_DIR = os.path.join(r"C:\radar_receiver\ml_dataset", os.path.basename(DATA_FOLDER))  # Directory to save standardized images
     IMAGE_OUTPUT_SIZE = (256, 256)  # Standardized output image size (height, width)
 
     # Polling interval (seconds) when waiting for new files or new frames
@@ -125,8 +125,7 @@ if __name__ == "__main__":
         Fs=FS_FAST,
         antenna_index_1based=1,
         fmin_hz=1e3,
-        fmax_hz=4e6,
-        voices_per_octave=2048,
+        fmax_hz=3e6,
         n_freq_bins=N_FREQ_BINS,
         contour_levels=10,
         enable_contours=False,
@@ -139,6 +138,8 @@ if __name__ == "__main__":
         draw_every_n=DRAW_EVERY_N,
         save_images_dir=IMAGES_OUTPUT_DIR if SAVE_IMAGES else None,
         output_size=IMAGE_OUTPUT_SIZE,
+        power_vmin=None,#0,              # Fixed global minimum power
+        power_vmax=None, #1e4,              # Fixed global maximum power (adjust as needed)
     )
 
     total_frames_processed = 0

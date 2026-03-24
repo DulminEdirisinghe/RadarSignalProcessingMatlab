@@ -91,7 +91,7 @@ test_source_enable              =   0                               -- 0: Disabl
 -- Profile configuration
 local profile_indx              =   0
 local start_freq				=	77								-- GHz
-local slope						=	29.982  							-- MHz/us
+local slope						=	78.9857  							-- MHz/us
 local idle_time					=	3.5								-- us
 local adc_start_time			=	6								-- us
 local adc_samples				=	256							    -- Number of samples per chirp

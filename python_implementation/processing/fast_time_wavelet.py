@@ -95,7 +95,6 @@ class LiveFastWaveletPG:
         antenna_index_1based=1,
         fmin_hz=1e3,
         fmax_hz=5e6,
-        voices_per_octave=12,
         n_freq_bins=512,              
         contour_levels=10,            
         enable_contours=False,        
@@ -108,6 +107,8 @@ class LiveFastWaveletPG:
         draw_every_n=1,               # draw only every N updates
         save_images_dir=None,         # directory to save heatmap images (None = disabled)
         output_size=(256, 256),       # standardized output image size (height, width)
+        power_vmin=None,              # fixed global min power (None = auto calculate from frame)
+        power_vmax=None,              # fixed global max power (None = auto calculate from frame)
     ):
         self.Fs = float(Fs)
         self.group_size = int(group_size)
@@ -115,7 +116,6 @@ class LiveFastWaveletPG:
 
         self.fmin_hz = float(fmin_hz)
         self.fmax_hz = float(fmax_hz)
-        self.voices_per_octave = int(voices_per_octave)
         self.n_freq_bins = int(n_freq_bins)
 
         self.contour_levels = int(contour_levels)
@@ -134,7 +134,7 @@ class LiveFastWaveletPG:
         self.draw_every_n = max(1, int(draw_every_n))
         self._update_counter = 0
 
-        self.ssq_wavelet = Wavelet(('GMW', {'beta': 60}))
+        self.ssq_wavelet = Wavelet('morlet') 
 
         # Image saving configuration
         self.save_images_dir = save_images_dir
@@ -149,6 +149,10 @@ class LiveFastWaveletPG:
         self.img = None
         self.cbar = None
         self._last_shape = None
+
+        # Fixed power scale settings
+        self.power_vmin = power_vmin
+        self.power_vmax = power_vmax
 
     @contextmanager
     def _p(self, key: str):
@@ -343,8 +347,11 @@ class LiveFastWaveletPG:
             
         try:
             with self._p("save.total"):
+                # Flip vertically so low frequencies appear at bottom (standard frequency plot orientation)
+                heatmap_data_flipped = np.flipud(heatmap_data)
+                
                 # Convert to RGB
-                rgb_image = self._heatmap_to_rgb(heatmap_data, vmin, vmax)
+                rgb_image = self._heatmap_to_rgb(heatmap_data_flipped, vmin, vmax)
                 
                 # Convert to PIL Image
                 with self._p("save.pil_convert"):
@@ -465,15 +472,20 @@ class LiveFastWaveletPG:
             P_db_uniform, f_uniform = self._resample_to_uniform_freq(P_db, f_plot)
 
             with self._p("post.percentiles"):
-                vmin = float(np.nanpercentile(P_db_uniform, 5))
-                vmax = float(np.nanpercentile(P_db_uniform, 99.5))
-                if not np.isfinite(vmin) or not np.isfinite(vmax) or vmax <= vmin:
-                    vmin = float(np.nanmin(P_db_uniform))
-                    vmax = float(np.nanmax(P_db_uniform))
-                    if not np.isfinite(vmin) or not np.isfinite(vmax):
-                        return
-                    if vmax <= vmin:
-                        vmax = vmin + 1.0
+                # Use fixed global power scale if provided, otherwise calculate from current frame
+                if self.power_vmin is not None and self.power_vmax is not None:
+                    vmin = float(self.power_vmin)
+                    vmax = float(self.power_vmax)
+                else:
+                    vmin = float(np.nanpercentile(P_db_uniform, 5))
+                    vmax = float(np.nanpercentile(P_db_uniform, 99.5))
+                    if not np.isfinite(vmin) or not np.isfinite(vmax) or vmax <= vmin:
+                        vmin = float(np.nanmin(P_db_uniform))
+                        vmax = float(np.nanmax(P_db_uniform))
+                        if not np.isfinite(vmin) or not np.isfinite(vmax):
+                            return
+                        if vmax <= vmin:
+                            vmax = vmin + 1.0
 
             # --- plot (PyQtGraph ImageItem) ---
             if should_draw:

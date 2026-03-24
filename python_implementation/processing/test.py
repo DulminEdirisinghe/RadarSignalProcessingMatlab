@@ -53,7 +53,7 @@ print("First 10 IQ samples:\n", iq[:10])
 # -----------------------------
 # 2) CWT with ssqueezepy
 # -----------------------------
-wavelet = Wavelet(('GMW', {'beta': 60}))
+wavelet = Wavelet(('GMW', {'beta': 20, 'gamma': 10}))  # very narrowband for better freq resolution
 
 WI, scales = cwt(I, wavelet=wavelet)
 WQ, _      = cwt(Q, wavelet=wavelet)
