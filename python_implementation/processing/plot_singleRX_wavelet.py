@@ -88,7 +88,7 @@ if __name__ == "__main__":
     # -------------------------
     # User settings
     # -------------------------
-    DATA_FOLDER = r"C:\ti\mmwave_studio_02_01_01_00\mmWaveStudio\PostProc\phantom_2m_128_03242024_3"
+    DATA_FOLDER = r"C:\radar_receiver\radar_new\helicopter_2m_128frame022526"
     GROUP_SIZE = 128
     Ns = ADC_SAMPLES
     Nc = NC_CHIRPS_PER_LOOP
@@ -107,7 +107,7 @@ if __name__ == "__main__":
     # ML Dataset configuration
     SAVE_IMAGES = True  # Set to False to disable image saving
     IMAGES_OUTPUT_DIR = os.path.join(r"C:\radar_receiver\ml_dataset", os.path.basename(DATA_FOLDER))  # Directory to save standardized images
-    IMAGE_OUTPUT_SIZE = (256, 256)  # Standardized output image size (height, width)
+    IMAGE_OUTPUT_SIZE = (1024, 1024)  # Standardized output image size (height, width)
 
     # Polling interval (seconds) when waiting for new files or new frames
     POLL_INTERVAL_SEC = 1.0

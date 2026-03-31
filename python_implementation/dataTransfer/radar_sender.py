@@ -10,10 +10,10 @@ from datetime import datetime
 
 PC_IP = "192.168.33.30"
 PC_PORT = 9999
-WATCH_DIR = "/mnt/ssd/13"
+WATCH_DIR = "/mnt/ssd/cont_send"
 BUF = 256 * 1024
 
-DELETE_AFTER_TRANSFER = True
+DELETE_AFTER_TRANSFER = False#True
 
 # Tuning (safe defaults)
 POLL_SLEEP        = 0.05   # 50ms directory poll

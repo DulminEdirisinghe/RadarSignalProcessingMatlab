@@ -6,7 +6,7 @@ from datetime import datetime
 
 LISTEN_IP = "192.168.33.30"
 LISTEN_PORT = 9999
-SAVE_DIR = r"C:\radar_receiver\radar_new"
+SAVE_DIR = r"C:\radar_receiver\radar_new\helicopter_2m_128frame022526"
 BUF = 1024 * 1024  # 256 KB
 
 def log(msg):
