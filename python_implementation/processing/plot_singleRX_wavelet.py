@@ -88,7 +88,7 @@ if __name__ == "__main__":
     # -------------------------
     # User settings
     # -------------------------
-    DATA_FOLDER = r"C:\radar_receiver\radar_new\helicopter_2m_128frame022526"
+    DATA_FOLDER = r"C:\radar_receiver\radar_new\cont_send"
     GROUP_SIZE = 128
     Ns = ADC_SAMPLES
     Nc = NC_CHIRPS_PER_LOOP

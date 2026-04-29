@@ -154,6 +154,9 @@ class LiveFastWaveletPG:
         self.power_vmin = power_vmin
         self.power_vmax = power_vmax
 
+        # Image save counter
+        self._image_save_counter = 0
+
     @contextmanager
     def _p(self, key: str):
         if self.enable_profiling:
@@ -364,12 +367,13 @@ class LiveFastWaveletPG:
                 
                 # Generate filename
                 with self._p("save.filename"):
-                    filename = f"frame_{frame_index:06d}_group_{group_index:03d}.png"
+                    filename = f"frame_{frame_index:06d}_group_{group_index:03d}_{self._image_save_counter:06d}.png"
                     filepath = os.path.join(self.save_images_dir, filename)
                 
                 # Save image
                 with self._p("save.disk_write"):
                     img_resized.save(filepath, quality=95)
+                    self._image_save_counter += 1
                     
         except Exception as e:
             print(f"[ERROR] Failed to save image: {e}")

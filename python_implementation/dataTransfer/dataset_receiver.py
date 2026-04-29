@@ -6,8 +6,8 @@ from datetime import datetime
 
 LISTEN_IP = "192.168.33.30"
 LISTEN_PORT = 9999
-SAVE_DIR = r"C:\radar_receiver\radar_new\cont_send"
-BUF = 1024 * 1024  # 256 KB
+SAVE_DIR = r"D:\MLDataset-RAW\New folder"
+BUF = 1024 * 1024
 
 def log(msg):
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}", flush=True)
@@ -25,27 +25,45 @@ def ensure_dir():
     os.makedirs(SAVE_DIR, exist_ok=True)
     log(f"Save directory: {SAVE_DIR}")
 
+def safe_relpath(name):
+    name = name.replace("\\", "/")
+    norm = os.path.normpath(name)
+
+    if os.path.isabs(norm) or norm.startswith("..") or ".." in norm.split(os.sep):
+        raise ValueError(f"unsafe path received: {name!r}")
+
+    return norm
+
 def handle_client(c):
-    # Protocol (repeat):
-    #   [4 bytes name_len][name bytes][8 bytes file_size][file bytes]
-    # After each file: server replies "OK\n"
     while True:
         hdr = c.recv(4)
         if not hdr:
-            return  # client disconnected cleanly
+            return
 
         if len(hdr) < 4:
             hdr += recvall(c, 4 - len(hdr))
 
         (name_len,) = struct.unpack("!I", hdr)
-        name = recvall(c, name_len).decode("utf-8", "replace")
+        raw_name = recvall(c, name_len).decode("utf-8", "replace")
         (fsize,) = struct.unpack("!Q", recvall(c, 8))
 
-        name = os.path.basename(name)
-        tmp_path = os.path.join(SAVE_DIR, name + ".partial")
-        final_path = os.path.join(SAVE_DIR, name)
+        rel_path = safe_relpath(raw_name)
+        final_path = os.path.join(SAVE_DIR, rel_path)
+        tmp_path = final_path + ".partial"
 
-        log(f"Receiving {name} ({fsize:,} bytes)")
+        parent_dir = os.path.dirname(final_path)
+        if parent_dir:
+            os.makedirs(parent_dir, exist_ok=True)
+
+        # Tell sender whether file is needed
+        if os.path.exists(final_path) and os.path.getsize(final_path) == fsize:
+            log(f"Skipping {rel_path} (already exists)")
+            c.sendall(b"SKIP\n")
+            continue
+        else:
+            c.sendall(b"SEND\n")
+
+        log(f"Receiving {rel_path} ({fsize:,} bytes)")
         remaining = fsize
 
         with open(tmp_path, "wb", buffering=0) as f:
@@ -57,7 +75,7 @@ def handle_client(c):
                 remaining -= len(chunk)
 
         os.replace(tmp_path, final_path)
-        log(f"Saved {name}")
+        log(f"Saved {rel_path}")
         c.sendall(b"OK\n")
 
 def main():

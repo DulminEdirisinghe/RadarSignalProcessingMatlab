@@ -104,8 +104,8 @@ function plotWaveletForChirps(adcData, outputDir, frame_index_val)
         figure;
         
         p= abs(cfs_magnitude).^2;
-        powerMap  = 10*log(p+eps);
-        %powerMap = p;
+        %powerMap  = 10*log(p+eps);
+        powerMap = p;
 
         h_mag = pcolor(t, f_real, powerMap);
         set(h_mag, 'EdgeColor', 'none');
@@ -123,7 +123,7 @@ function plotWaveletForChirps(adcData, outputDir, frame_index_val)
        
         % ---- Tick marks (measures) ----
         xticks(linspace(0, 2e-4, 5));          % 0, 0.5e-4, 1e-4, 1.5e-4, 2e-4
-        yticks(0:0.1e6:3e6);                     % 0 to 5 MHz in 1 MHz steps
+        yticks(0:0.1e6:1.6e6);                     % 0 to 5 MHz in 1 MHz steps
         
         % Make ticks readable (show MHz on y, microseconds on x)
         ax = gca;
@@ -133,7 +133,7 @@ function plotWaveletForChirps(adcData, outputDir, frame_index_val)
         box on;
         grid on;
         % Set limits
-        ylim([0 3e6]);
+        ylim([0 1.6e6]);
         xlim([0 2e-4]);
 
         % Overlay contour lines
